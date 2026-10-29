@@ -36,3 +36,23 @@ def test_weights_from_config(cfg):
     w = {"atr_pct": 0, "volume_ratio": 0, "oi_change_abs": 0, "return_7d_abs": 0, "oi_size": 1}
     ranked = score_and_rank([coin("S", 9, 9, 9, 9, 1e6), coin("L", 1, 1, 1, 1, 9e6)], w)
     assert ranked[0].base == "L"
+
+
+def test_beta_and_correlation():
+    import random
+
+    from screener.metrics import beta_corr
+    from tests.conftest import make_bars
+
+    rnd = random.Random(1)
+    btc_moves = [rnd.uniform(-0.04, 0.04) for _ in range(40)]
+    btc, alt, other = [100.0], [10.0], [5.0]
+    for m in btc_moves:
+        btc.append(btc[-1] * (1 + m))
+        alt.append(alt[-1] * (1 + 2 * m))                        # always twice BTC's move
+        other.append(other[-1] * (1 + rnd.uniform(-0.04, 0.04)))  # ignores BTC
+    beta, corr = beta_corr(make_bars(alt), make_bars(btc), 30)
+    assert beta == pytest.approx(2.0) and corr == pytest.approx(1.0)
+    beta, corr = beta_corr(make_bars(other), make_bars(btc), 30)
+    assert abs(corr) < 0.4
+    assert beta_corr(make_bars(alt[:5]), make_bars(btc), 30) == (None, None)  # too new

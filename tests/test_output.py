@@ -9,7 +9,7 @@ from PIL import Image
 
 from screener import output
 from screener.image import render_table
-from screener.output import diff_lists, discord_message, post_discord, watchlist_text, week_label, week_of, week_title
+from screener.output import btc_summary, diff_lists, discord_message, post_discord, watchlist_text, week_label, week_of, week_title
 from screener.state import load_state, previous_list, record_week
 from screener.tags import tag_coin
 from tests.conftest import make_bars, zigzag
@@ -71,8 +71,12 @@ def test_discord_message(cfg):
         tag_coin(c, cfg)
     cs[1].funding_8h_pct = 0.08
     cs[1].tags["funding_extreme"] = True
-    msg = discord_message(cs, ["WIF"], ["DOGE"], date(2026, 11, 2), cfg)
-    assert msg.startswith("@here\n**Alt watchlist: Mon 2 Nov – Sun 8 Nov**")
+    btc = coins("BTC")[0]
+    tag_coin(btc, cfg)
+    line = btc_summary(btc)
+    assert line == "BTC: daily trend Up, weekly trend " + btc.tags["trend_w"] + ", +12.0% in 7 days"
+    msg = discord_message(cs, ["WIF"], ["DOGE"], date(2026, 11, 2), cfg, btc_line=line)
+    assert msg.startswith("@here\n**Alt watchlist: Mon 2 Nov – Sun 8 Nov**\nBTC: daily trend Up")
     assert "**New this week:** WIF" in msg and "**Dropped off:** DOGE" in msg
     assert "extreme funding" in msg
     assert "Import list" in msg
@@ -107,7 +111,8 @@ def test_table_image(cfg):
     cs = coins("1000PEPE", "WIF", "ZEC")
     for c in cs:
         tag_coin(c, cfg)
-    png = render_table(cs, cfg, title="Alt watchlist: Mon 2 Nov – Sun 8 Nov", subtitle="Prices: test")
+    png = render_table(cs, cfg, title="Alt watchlist: Mon 2 Nov – Sun 8 Nov", subtitle="Prices: test",
+                       btc_line="BTC: daily trend Down, weekly trend Range, -3.1% in 7 days")
     img = Image.open(io.BytesIO(png))
     assert img.format == "PNG" and img.width > 800 and img.height > 200
     cfg["table"]["columns"] = ["rank", "coin"]

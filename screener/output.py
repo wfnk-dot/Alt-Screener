@@ -46,13 +46,22 @@ def diff_lists(current, previous):
     return [c for c in current if c not in prev], [c for c in previous if c not in cur]
 
 
-def discord_message(top_coins, new, dropped, monday, cfg, notes=()):
+def btc_summary(btc):
+    """'BTC: daily trend Down, weekly trend Range, -3.1% this week'."""
+    t = btc.tags
+    move = "" if btc.return_7d_pct is None else f", {btc.return_7d_pct:+.1f}% in 7 days"
+    return f"BTC: daily trend {t['trend_d']}, weekly trend {t['trend_w']}{move}"
+
+
+def discord_message(top_coins, new, dropped, monday, cfg, btc_line="", notes=()):
     """Short text that goes above the table image."""
     lines = []
     ping = (cfg.get("discord") or {}).get("ping") or ""
     if ping:
         lines.append(ping)
     lines.append(f"**{week_title(monday)}**")
+    if btc_line:
+        lines.append(btc_line)
     lines.append("**New this week:** " + (", ".join(new) if new else "none"))
     lines.append("**Dropped off:** " + (", ".join(dropped) if dropped else "none"))
     extras = []
@@ -110,7 +119,7 @@ def report_markdown(ranked, top_n, monday, run_info, rejected_counts, notes=()):
     out.append("")
     head = [
         "Rank", "Coin", "Score", "Trend", "ATR%", "Vol 7d/30d", "7d move", "Weekend move", "OI 3d", "OI 7d",
-        "Binance OI", "Binance 7d avg vol", "HL 24h vol", "HL OI", "wRSI", f"n/{weeks}", "Funding /8h", "Tags", "Candles",
+        "Corr BTC", "Beta BTC", "Binance OI", "Binance 7d avg vol", "HL 24h vol", "HL OI", "wRSI", f"n/{weeks}", "Funding /8h", "Tags", "Candles",
     ]
     out.append("| " + " | ".join(head) + " |")
     out.append("|" + "---|" * len(head))
@@ -133,6 +142,8 @@ def report_markdown(ranked, top_n, monday, run_info, rejected_counts, notes=()):
             fmt_pct(c.return_weekend_pct, digits=1),
             fmt_pct(c.oi_change_3d_pct, digits=1),
             fmt_pct(c.oi_change_pct, digits=1),
+            "n/a" if c.corr_btc is None else f"{c.corr_btc:.2f}",
+            "n/a" if c.beta_btc is None else f"{c.beta_btc:.2f}",
             _money(c.oi_usd),
             _money(c.avg_vol_7d),
             _money(c.hl_volume_24h),

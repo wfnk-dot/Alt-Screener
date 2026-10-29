@@ -44,6 +44,8 @@ table:
   #   funding          current funding per 8 hours (yellow if extreme)
   #   oi_size          open interest in dollars
   #   volume_ratio     last 7 days' volume vs the 30-day average (above 1 = rising interest)
+  #   corr_btc         correlation with BTC: 1 = copies BTC, 0 = does its own thing, below 0 = opposite
+  #   beta_btc         how hard it moves vs BTC: 2x = about 2% for every 1% BTC move
   #   score            the ranking score (0-100)
   columns:
     - rank
@@ -57,7 +59,15 @@ table:
     - oi_7d
     - rsi_weekly
     - rsi_weeks_above
-    - funding
+    - corr_btc
+    - beta_btc
+
+# ---------------------------------------------------------------------
+#  BTC (shown at the top of the post, and used for correlation/beta)
+# ---------------------------------------------------------------------
+btc:
+  binance_symbol: BTCUSDT
+  hyperliquid_coin: BTC
 
 # ---------------------------------------------------------------------
 #  How many coins go on the watchlist
@@ -122,6 +132,8 @@ indicators:
   change_days: 7
   # Days used for the shorter "OI 3 days" change
   oi_short_change_days: 3
+  # Days of daily moves used for correlation and beta vs BTC
+  beta_corr_days: 30
   # Fewer than this many weekly candles = "New listing" tag
   new_listing_min_weeks: 26
   # Funding rate (per 8 hours, in %) at or beyond which it's flagged as extreme

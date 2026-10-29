@@ -73,13 +73,19 @@ COLUMNS = {
     "oi_size": ("OI", "size", "right", lambda i, c: (_money(c.oi_usd), TEXT)),
     "volume_ratio": ("Volume", "7d vs 30d", "right",
                      lambda i, c: ("n/a", MUTED) if c.vol_ratio is None else (f"{c.vol_ratio:.2f}x", TEXT)),
+    "corr_btc": ("Corr", "vs BTC", "right",
+                 lambda i, c: ("n/a", MUTED) if c.corr_btc is None else (f"{c.corr_btc:.2f}", TEXT)),
+    "beta_btc": ("Beta", "vs BTC", "right",
+                 lambda i, c: ("n/a", MUTED) if c.beta_btc is None else (f"{c.beta_btc:.1f}x", TEXT)),
     "score": ("Score", "", "right", lambda i, c: ("n/a", MUTED) if c.score is None else (f"{c.score:.0f}", TEXT)),
 }
 
-LEGEND = "OI = open interest (money in open positions).  ATR = average daily move.  Weeks RSI above 50 = out of the last 12 weeks."
+LEGEND = ("OI = open interest (money in open positions).  ATR = average daily move.  "
+          "Weeks RSI above 50 = out of the last 12 weeks.  Corr = how closely it follows BTC (1 = exactly).  "
+          "Beta 2x = moves about 2% when BTC moves 1%.")
 
 
-def render_table(coins, cfg, title, subtitle=""):
+def render_table(coins, cfg, title, subtitle="", btc_line=""):
     keys = [k for k in cfg["table"]["columns"] if k in COLUMNS]
     body, bold = _font("Regular", 15), _font("SemiBold", 15)
     head = _font("SemiBold", 12)
@@ -112,9 +118,11 @@ def render_table(coins, cfg, title, subtitle=""):
         col_w.append(int(w))
 
     table_w = sum(col_w) + gap * (len(keys) - 1)
-    lines_below = [x for x in (subtitle, legend) if x]
+    parts = [p.strip() for p in legend.split("  ") if p.strip()]
+    legend_lines = [" ".join(parts[:3]), " ".join(parts[3:])]
+    lines_below = [x for x in (subtitle, *legend_lines) if x]
     total_w = max(table_w, int(max([title_font.getlength(title)] + [small.getlength(x) for x in lines_below]))) + 2 * pad
-    title_h = 40 * S
+    title_h = (64 if btc_line else 40) * S
     head_h = 40 * S
     foot_h = (18 * S) * len(lines_below) + 12 * S
     total_h = pad + title_h + head_h + row_h * len(cells) + foot_h + pad
@@ -122,6 +130,8 @@ def render_table(coins, cfg, title, subtitle=""):
     img = Image.new("RGB", (total_w, total_h), BG)
     d = ImageDraw.Draw(img)
     d.text((pad, pad), title, font=title_font, fill=TEXT)
+    if btc_line:
+        d.text((pad, pad + 30 * S), btc_line, font=_font("Regular", 14), fill=MUTED)
 
     y = pad + title_h
     x = pad

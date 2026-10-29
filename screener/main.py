@@ -19,8 +19,8 @@ from .data import (
 )
 from .image import render_table
 from .filters import apply_filters
-from .metrics import Coin, compute_metrics, live_price_changes
-from .output import diff_lists, discord_message, post_discord, report_markdown, watchlist_text, week_of, week_title
+from .metrics import Coin, beta_corr, compute_metrics, live_price_changes
+from .output import diff_lists, discord_message, post_discord, report_markdown, btc_summary, watchlist_text, week_of, week_title
 from .ranking import score_and_rank
 from .state import load_state, previous_list, record_week, save_state
 from .tags import tag_coin
@@ -108,7 +108,11 @@ def run(cfg, today, dry_run=False, scheduled=False, root=ROOT, now_uk=None):
             candidates.append(c)
     log.info("Downloading candles for %d coins", len(candidates))
 
-    klines = parallel_map(lambda s: archive.klines(s, today, d["history_months"]), [c.symbol for c in candidates], workers)
+    btc_symbol = cfg["btc"]["binance_symbol"]
+    klines = parallel_map(
+        lambda s: archive.klines(s, today, d["history_months"]), [c.symbol for c in candidates] + [btc_symbol], workers
+    )
+    btc_bars = [b for b in klines[btc_symbol] if b.day < today]
     for c in candidates:
         c.bars = [b for b in klines[c.symbol] if b.day < today]
     newest = max((c.bars[-1].day for c in candidates if c.bars), default=today - timedelta(days=1))
@@ -161,7 +165,8 @@ def run(cfg, today, dry_run=False, scheduled=False, root=ROOT, now_uk=None):
             log.warning("Hyperliquid candles failed for %s: %s", name, e)
             return []
 
-    hl_candles = parallel_map(hl_bars, [c.hl_name for c in live_coins], min(workers, 4))
+    btc_hl = cfg["btc"]["hyperliquid_coin"]
+    hl_candles = parallel_map(hl_bars, [c.hl_name for c in live_coins] + [btc_hl], min(workers, 4))
 
     funding = live.funding_8h()
     for c in live_coins:
@@ -178,6 +183,7 @@ def run(cfg, today, dry_run=False, scheduled=False, root=ROOT, now_uk=None):
     for c in live_coins:
         compute_metrics(c, cfg)
         live_price_changes(c, hl_candles[c.hl_name], today)
+        c.beta_btc, c.corr_btc = beta_corr(c.bars, btc_bars, cfg["indicators"]["beta_corr_days"])
         if apply_filters(c, cfg):
             passed.append(c)
         for reason in c.failed:
@@ -189,6 +195,13 @@ def run(cfg, today, dry_run=False, scheduled=False, root=ROOT, now_uk=None):
     ranked = score_and_rank(passed, cfg["ranking_weights"])
     for c in ranked:
         tag_coin(c, cfg)
+
+    # BTC's own trend, shown at the top of the post
+    btc = Coin(btc_symbol, "BTC", btc_hl, btc_bars)
+    compute_metrics(btc, cfg)
+    live_price_changes(btc, hl_candles[btc_hl], today)
+    tag_coin(btc, cfg)
+    btc_line = btc_summary(btc)
     top = ranked[: cfg["top_n"]]
 
     monday = week_of(today if now_uk is None else now_uk.date())
@@ -199,12 +212,12 @@ def run(cfg, today, dry_run=False, scheduled=False, root=ROOT, now_uk=None):
 
     now_uk = now_uk or datetime.now(ZoneInfo(cfg["schedule"]["timezone"]))
     wl = watchlist_text(top, cfg)
-    msg = discord_message(top, new, dropped, monday, cfg, notes=[n for n in notes if n.startswith("Candles from Bybit")])
+    msg = discord_message(top, new, dropped, monday, cfg, btc_line=btc_line, notes=[n for n in notes if n.startswith("Candles from Bybit")])
     live = any(c.price_source.startswith("Hyperliquid") for c in top)
     prices = f"Prices: Hyperliquid, live at {now_uk:%a %d %b %H:%M} UK." if live else f"Prices: Binance daily candles to {newest:%a %d %b}."
     oi_text = f"OI: Binance, to end of {oi_day:%a %d %b}." if oi_day else ""
     footer = f"{prices}  {oi_text}  ATR & trend: Binance daily candles to {newest:%a %d %b}."
-    png = render_table(top, cfg, title=week_title(monday), subtitle=footer)
+    png = render_table(top, cfg, title=week_title(monday), subtitle=footer, btc_line=btc_line)
     run_info = {
         "Generated (UK time)": now_uk.strftime("%a %d %b %Y %H:%M"),
         "Daily candles up to (UTC)": newest.isoformat(),

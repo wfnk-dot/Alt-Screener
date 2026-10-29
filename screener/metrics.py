@@ -19,6 +19,8 @@ class Coin:
     oi_change_3d_pct: float | None = None  # same over 3 days
     return_weekend_pct: float | None = None  # Friday close -> Sunday close (or now, mid-weekend)
     price_source: str = "Binance archive"
+    beta_btc: float | None = None        # coin's daily move per 1% BTC move
+    corr_btc: float | None = None        # 0 = ignores BTC, 1 = moves exactly with BTC
     funding_8h_pct: float | None = None
     funding_source: str = ""
     # filled by compute_metrics
@@ -68,3 +70,25 @@ def live_price_changes(coin, hl_bars, today):
         end = sun.close if sun else sat.close
         coin.return_weekend_pct = (end / sat.open - 1) * 100
     return coin
+
+
+def beta_corr(bars, btc_bars, days, min_days=10):
+    """Beta and correlation of daily returns vs BTC over the last `days` days both traded.
+    (None, None) when there's too little overlap."""
+    btc = {b.day: b.close for b in btc_bars}
+    pairs = []
+    for prev, cur in zip(bars, bars[1:]):
+        if (cur.day - prev.day).days == 1 and prev.day in btc and cur.day in btc and prev.close and btc[prev.day]:
+            pairs.append((cur.close / prev.close - 1, btc[cur.day] / btc[prev.day] - 1))
+    pairs = pairs[-days:]
+    if len(pairs) < min_days:
+        return None, None
+    n = len(pairs)
+    mc = sum(p[0] for p in pairs) / n
+    mb = sum(p[1] for p in pairs) / n
+    cov = sum((c - mc) * (b - mb) for c, b in pairs) / n
+    var_c = sum((c - mc) ** 2 for c, _ in pairs) / n
+    var_b = sum((b - mb) ** 2 for _, b in pairs) / n
+    if not var_b or not var_c:
+        return None, None
+    return cov / var_b, cov / (var_b * var_c) ** 0.5
