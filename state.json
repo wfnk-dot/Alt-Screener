@@ -1,1 +1,17 @@
-{"last_scheduled_week": null, "weeks": {}}
+{
+  "last_scheduled_week": null,
+  "weeks": {
+    "2026-11-02": [
+      "LIT",
+      "ENA",
+      "INJ",
+      "NEAR",
+      "WLD",
+      "1000PEPE",
+      "ZEC",
+      "ARB",
+      "STRK",
+      "ZRO"
+    ]
+  }
+}
