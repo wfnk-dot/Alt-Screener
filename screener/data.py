@@ -8,6 +8,7 @@ import io
 import logging
 import os
 import re
+import threading
 import time
 import zipfile
 from concurrent.futures import ThreadPoolExecutor
@@ -286,19 +287,48 @@ def hyperliquid_coins(http, url):
     return out
 
 
-def hyperliquid_candles(http, url, coin, start_ms, end_ms):
-    """Hyperliquid daily candles (UTC days). The last one is today's, still forming, so its
-    close is the live price."""
+_HL_INTERVAL_MS = {"1h": 3_600_000, "4h": 14_400_000, "1d": 86_400_000}
+
+
+class Throttle:
+    """Spaces out calls so Hyperliquid's per-minute request limit isn't hit."""
+
+    def __init__(self, seconds):
+        self.seconds = seconds
+        self.lock = threading.Lock()
+        self.last = 0.0
+
+    def wait(self):
+        with self.lock:
+            delay = self.last + self.seconds - time.monotonic()
+            if delay > 0:
+                time.sleep(delay)
+            self.last = time.monotonic()
+
+
+def hyperliquid_candles(http, url, coin, start_ms, end_ms, interval="1d", throttle=None):
+    """Hyperliquid candles, oldest first.
+
+    Daily ("1d"): bars keyed by UTC date, and the last one is today's, still forming, so its
+    close is the live price. Intraday ("4h", "1h"): only closed candles, keyed by start time.
+    """
+    if throttle:
+        throttle.wait()
     r = http.request(
         "POST",
         url,
-        json={"type": "candleSnapshot", "req": {"coin": coin, "interval": "1d", "startTime": start_ms, "endTime": end_ms}},
+        json={"type": "candleSnapshot", "req": {"coin": coin, "interval": interval, "startTime": start_ms, "endTime": end_ms}},
     )
+    step = _HL_INTERVAL_MS[interval]
     bars = []
     for c in r.json():
+        t = int(c["t"])
+        if interval != "1d" and t + step > end_ms:
+            continue  # still forming
+        when = datetime.fromtimestamp(t / 1000, tz=timezone.utc)
         bars.append(
             Bar(
-                day=datetime.fromtimestamp(int(c["t"]) / 1000, tz=timezone.utc).date(),
+                day=when.date() if interval == "1d" else when,
                 open=float(c["o"]),
                 high=float(c["h"]),
                 low=float(c["l"]),

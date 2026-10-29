@@ -1,4 +1,4 @@
-"""Info-only tags: trend (daily/weekly), weekly RSI, new listing, OI change, funding."""
+"""Info-only tags: trend (weekly/daily/4h/1h), weekly RSI, new listing, funding."""
 from .indicators import atr, ema, pivots, rsi_series, to_weekly
 
 
@@ -36,12 +36,11 @@ def trend(bars, pivot_n, ind, force_range_check=False):
     ph = [highs[i] for i in pivots(highs, pivot_n, "high")]
     pl = [lows[i] for i in pivots(lows, pivot_n, "low")]
     have_swings = len(ph) >= 2 and len(pl) >= 2
-    close = closes[-1]
+    # Up = EMA12 above EMA25, both rising, and higher swing highs + higher swing lows. Down = mirror.
     if (
         ef[-1] > es[-1]
         and _rising(ef, back)
         and _rising(es, back)
-        and close > es[-1]
         and have_swings
         and ph[-1] > ph[-2]
         and pl[-1] > pl[-2]
@@ -51,7 +50,6 @@ def trend(bars, pivot_n, ind, force_range_check=False):
         ef[-1] < es[-1]
         and _falling(ef, back)
         and _falling(es, back)
-        and close < es[-1]
         and have_swings
         and ph[-1] < ph[-2]
         and pl[-1] < pl[-2]
@@ -61,28 +59,32 @@ def trend(bars, pivot_n, ind, force_range_check=False):
 
 
 def weekly_rsi(weekly_bars, ind):
-    """(latest weekly RSI, count of the last N weekly RSIs above the threshold, N). None when n/a."""
+    """(latest weekly RSI, lowest and highest weekly RSI over the last N weeks). None when n/a.
+    The low shows how deep the resets went; the high shows how strong it got."""
     rsis = rsi_series([b.close for b in weekly_bars], ind["rsi_period"])
     n = ind["rsi_lookback_weeks"]
     last = rsis[-1] if rsis else None
     window = rsis[-n:]
-    count = None
     if len(window) == n and all(v is not None for v in window):
-        count = sum(1 for v in window if v > ind["rsi_threshold"])
-    return last, count, n
+        return last, min(window), max(window)
+    return last, None, None
 
 
-def tag_coin(coin, cfg):
+def tag_coin(coin, cfg, intraday=None):
+    """intraday: {"4h": bars, "1h": bars} of closed candles, or None if not fetched."""
     ind = cfg["indicators"]
     weekly = to_weekly(coin.bars)
-    rsi, above, n = weekly_rsi(weekly, ind)
+    rsi, low, high = weekly_rsi(weekly, ind)
+    intraday = intraday or {}
     t = {
-        "trend_d": trend(coin.bars, ind["pivot_bars_daily"], ind, force_range_check=True),
         "trend_w": trend(weekly, ind["pivot_bars_weekly"], ind),
+        "trend_d": trend(coin.bars, ind["pivot_bars_daily"], ind, force_range_check=True),
+        "trend_4h": trend(intraday["4h"], ind["pivot_bars_4h"], ind) if intraday.get("4h") else "n/a",
+        "trend_1h": trend(intraday["1h"], ind["pivot_bars_1h"], ind) if intraday.get("1h") else "n/a",
         "wrsi": rsi,
-        "wrsi_above": above,
-        "wrsi_weeks": n,
-        "wrsi_threshold": ind["rsi_threshold"],
+        "wrsi_low": low,
+        "wrsi_high": high,
+        "wrsi_weeks": ind["rsi_lookback_weeks"],
         "new_listing": len(weekly) < ind["new_listing_min_weeks"],
         "funding_extreme": coin.funding_8h_pct is not None
         and abs(coin.funding_8h_pct) >= ind["funding_extreme_pct"],
@@ -101,33 +103,11 @@ def fmt_pct(v, signed=True, digits=0):
 
 
 def trend_text(t):
-    return f"D: {t['trend_d']} · W: {t['trend_w']}"
+    return f"W: {t['trend_w']} · D: {t['trend_d']} · 4h: {t['trend_4h']} · 1h: {t['trend_1h']}"
 
 
 def rsi_text(t):
+    """('58', '47-71')"""
     rsi = "n/a" if t["wrsi"] is None else f"{t['wrsi']:.0f}"
-    above = "n/a" if t["wrsi_above"] is None else f"{t['wrsi_above']}/{t['wrsi_weeks']}"
-    return rsi, above
-
-
-def oi_text(coin):
-    if coin.oi_change_pct is None:
-        return "OI n/a"
-    arrow = "↑" if coin.oi_change_pct >= 0 else "↓"
-    return f"OI {arrow} {abs(coin.oi_change_pct):.0f}%"
-
-
-def funding_text(coin):
-    if coin.funding_8h_pct is None:
-        return "Funding n/a"
-    flag = " ⚠️ extreme" if coin.tags.get("funding_extreme") else ""
-    return f"Funding {coin.funding_8h_pct:+.3f}%{flag}"
-
-
-def tag_list(coin):
-    t = coin.tags
-    rsi, above = rsi_text(t)
-    out = [trend_text(t), f"wRSI {rsi}", f"wRSI>{t['wrsi_threshold']:g} {above}", oi_text(coin), funding_text(coin)]
-    if t["new_listing"]:
-        out.append("New listing")
-    return out
+    rng = "n/a" if t["wrsi_low"] is None else f"{t['wrsi_low']:.0f}–{t['wrsi_high']:.0f}"
+    return rsi, rng

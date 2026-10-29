@@ -13,6 +13,7 @@ from .data import (
     BinanceLive,
     Http,
     bybit_klines,
+    Throttle,
     hyperliquid_candles,
     hyperliquid_coins,
     parallel_map,
@@ -154,20 +155,6 @@ def run(cfg, today, dry_run=False, scheduled=False, root=ROOT, now_uk=None):
             if before.get(short) and before[short].contracts:
                 c.oi_change_3d_pct = (now.contracts / before[short].contracts - 1) * 100
 
-    # Live prices from Hyperliquid, so price moves include the weekend
-    start_ms = int(datetime.combine(today - timedelta(days=10), datetime.min.time(), timezone.utc).timestamp() * 1000)
-    end_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
-
-    def hl_bars(name):
-        try:
-            return hyperliquid_candles(http, d["hyperliquid_url"], name, start_ms, end_ms)
-        except Exception as e:  # noqa: BLE001
-            log.warning("Hyperliquid candles failed for %s: %s", name, e)
-            return []
-
-    btc_hl = cfg["btc"]["hyperliquid_coin"]
-    hl_candles = parallel_map(hl_bars, [c.hl_name for c in live_coins] + [btc_hl], min(workers, 4))
-
     funding = live.funding_8h()
     for c in live_coins:
         if funding and c.symbol in funding:
@@ -182,7 +169,6 @@ def run(cfg, today, dry_run=False, scheduled=False, root=ROOT, now_uk=None):
         rejected[name] = 0
     for c in live_coins:
         compute_metrics(c, cfg)
-        live_price_changes(c, hl_candles[c.hl_name], today)
         c.beta_btc, c.corr_btc = beta_corr(c.bars, btc_bars, cfg["indicators"]["beta_corr_days"])
         if apply_filters(c, cfg):
             passed.append(c)
@@ -192,17 +178,42 @@ def run(cfg, today, dry_run=False, scheduled=False, root=ROOT, now_uk=None):
     if not passed:
         raise RuntimeError("no coins passed the filters (data problem?)")
 
+    # Live prices from Hyperliquid (the archive lags, so this is what includes the weekend).
+    # Spaced out to stay under Hyperliquid's request limit.
+    throttle = Throttle(d["hyperliquid_seconds_between_calls"])
+    now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+
+    def hl_bars(name, interval, days):
+        start = now_ms - days * 86_400_000
+        try:
+            return hyperliquid_candles(http, d["hyperliquid_url"], name, start, now_ms, interval, throttle)
+        except Exception as e:  # noqa: BLE001
+            log.warning("Hyperliquid %s candles failed for %s: %s", interval, name, e)
+            return []
+
+    btc_hl = cfg["btc"]["hyperliquid_coin"]
+    log.info("Fetching live Hyperliquid prices for %d coins", len(passed) + 1)
+    daily_hl = parallel_map(lambda n: hl_bars(n, "1d", 10), [c.hl_name for c in passed] + [btc_hl], 4)
+    for c in passed:
+        live_price_changes(c, daily_hl[c.hl_name], today)
+
     ranked = score_and_rank(passed, cfg["ranking_weights"])
+    top = ranked[: cfg["top_n"]]
+
+    # 4h and 1h trends: only for the coins on the list (and BTC), to keep requests down
+    ind = cfg["indicators"]
+    btc = Coin(btc_symbol, "BTC", btc_hl, btc_bars)
+    names = [c.hl_name for c in top] + [btc_hl]
+    h4 = parallel_map(lambda n: hl_bars(n, "4h", ind["intraday_candles"] * 4 // 24 + 1), names, 4)
+    h1 = parallel_map(lambda n: hl_bars(n, "1h", ind["intraday_candles"] // 24 + 1), names, 4)
     for c in ranked:
-        tag_coin(c, cfg)
+        tag_coin(c, cfg, {"4h": h4.get(c.hl_name), "1h": h1.get(c.hl_name)})
 
     # BTC's own trend, shown at the top of the post
-    btc = Coin(btc_symbol, "BTC", btc_hl, btc_bars)
     compute_metrics(btc, cfg)
-    live_price_changes(btc, hl_candles[btc_hl], today)
-    tag_coin(btc, cfg)
+    live_price_changes(btc, daily_hl[btc_hl], today)
+    tag_coin(btc, cfg, {"4h": h4[btc_hl], "1h": h1[btc_hl]})
     btc_line = btc_summary(btc)
-    top = ranked[: cfg["top_n"]]
 
     monday = week_of(today if now_uk is None else now_uk.date())
     week_key = monday.isoformat()
@@ -216,7 +227,7 @@ def run(cfg, today, dry_run=False, scheduled=False, root=ROOT, now_uk=None):
     live = any(c.price_source.startswith("Hyperliquid") for c in top)
     prices = f"Prices: Hyperliquid, live at {now_uk:%a %d %b %H:%M} UK." if live else f"Prices: Binance daily candles to {newest:%a %d %b}."
     oi_text = f"OI: Binance, to end of {oi_day:%a %d %b}." if oi_day else ""
-    footer = f"{prices}  {oi_text}  ATR & trend: Binance daily candles to {newest:%a %d %b}."
+    footer = f"{prices}  {oi_text}  ATR, weekly/daily trend: Binance candles to {newest:%a %d %b}. 4h/1h trend: Hyperliquid, live."
     png = render_table(top, cfg, title=week_title(monday), subtitle=footer, btc_line=btc_line)
     run_info = {
         "Generated (UK time)": now_uk.strftime("%a %d %b %Y %H:%M"),

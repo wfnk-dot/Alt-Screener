@@ -51,24 +51,26 @@ def _rsi(c):
     return ("n/a", MUTED) if v is None else (f"{v:.0f}", TEXT)
 
 
-def _weeks_above(c):
-    n = c.tags.get("wrsi_above")
-    return ("n/a", MUTED) if n is None else (f"{n} of {c.tags.get('wrsi_weeks', 12)}", TEXT)
+def _rsi_range(c):
+    low = c.tags.get("wrsi_low")
+    return ("n/a", MUTED) if low is None else (f"{low:.0f}–{c.tags['wrsi_high']:.0f}", TEXT)
 
 
 # key: (header line 1, header line 2, alignment, value function -> (text, colour) or ("pill", trend))
 COLUMNS = {
     "rank": ("#", "", "right", lambda i, c: (str(i), MUTED)),
     "coin": ("Coin", "", "left", lambda i, c: (c.base, TEXT)),
-    "trend_daily": ("Trend", "daily", "center", lambda i, c: ("pill", c.tags.get("trend_d", "n/a"))),
     "trend_weekly": ("Trend", "weekly", "center", lambda i, c: ("pill", c.tags.get("trend_w", "n/a"))),
+    "trend_daily": ("Trend", "daily", "center", lambda i, c: ("pill", c.tags.get("trend_d", "n/a"))),
+    "trend_4h": ("Trend", "4h", "center", lambda i, c: ("pill", c.tags.get("trend_4h", "n/a"))),
+    "trend_1h": ("Trend", "1h", "center", lambda i, c: ("pill", c.tags.get("trend_1h", "n/a"))),
     "atr": ("ATR", "daily %", "right", lambda i, c: _pct(c.atr_pct, signed=False)),
     "price_7d": ("Price", "7 days", "right", lambda i, c: _pct(c.return_7d_pct)),
     "price_weekend": ("Price", "weekend", "right", lambda i, c: _pct(c.return_weekend_pct)),
     "oi_3d": ("OI", "3 days", "right", lambda i, c: _pct(c.oi_change_3d_pct)),
     "oi_7d": ("OI", "7 days", "right", lambda i, c: _pct(c.oi_change_pct)),
     "rsi_weekly": ("RSI", "weekly", "right", lambda i, c: _rsi(c)),
-    "rsi_weeks_above": ("Weeks RSI", "above 50", "right", lambda i, c: _weeks_above(c)),
+    "rsi_range": ("RSI 12w", "low–high", "right", lambda i, c: _rsi_range(c)),
     "funding": ("Funding", "per 8h", "right", lambda i, c: _funding(c)),
     "oi_size": ("OI", "size", "right", lambda i, c: (_money(c.oi_usd), TEXT)),
     "volume_ratio": ("Volume", "7d vs 30d", "right",
@@ -81,7 +83,7 @@ COLUMNS = {
 }
 
 LEGEND = ("OI = open interest (money in open positions).  ATR = average daily move.  "
-          "Weeks RSI above 50 = out of the last 12 weeks.  Corr = how closely it follows BTC (1 = exactly).  "
+          "RSI low–high = weekly RSI range over the last 12 weeks.  Corr = how closely it follows BTC (1 = exactly).  "
           "Beta 2x = moves about 2% when BTC moves 1%.")
 
 
@@ -92,13 +94,12 @@ def render_table(coins, cfg, title, subtitle="", btc_line=""):
     title_font, small = _font("SemiBold", 20), _font("Regular", 11)
     pad, gap, row_h, pill_pad = 24 * S, 22 * S, 36 * S, 9 * S
 
-    # Header text uses the configured RSI settings
+    # Header text uses the configured RSI lookback
     weeks = cfg["indicators"]["rsi_lookback_weeks"]
-    threshold = cfg["indicators"]["rsi_threshold"]
     headers = {k: COLUMNS[k][:2] for k in keys}
-    if "rsi_weeks_above" in headers:
-        headers["rsi_weeks_above"] = ("Weeks RSI", f"above {threshold:g}")
-    legend = LEGEND.replace("above 50", f"above {threshold:g}").replace("last 12", f"last {weeks}")
+    if "rsi_range" in headers:
+        headers["rsi_range"] = (f"RSI {weeks}w", "low–high")
+    legend = LEGEND.replace("12 weeks", f"{weeks} weeks")
 
     cells = []
     for i, c in enumerate(coins, 1):

@@ -74,9 +74,9 @@ def test_discord_message(cfg):
     btc = coins("BTC")[0]
     tag_coin(btc, cfg)
     line = btc_summary(btc)
-    assert line == "BTC: daily trend Up, weekly trend " + btc.tags["trend_w"] + ", +12.0% in 7 days"
+    assert line == f"BTC trend: weekly {btc.tags['trend_w']}, daily Up, 4h n/a, 1h n/a  ·  +12.0% in 7 days"
     msg = discord_message(cs, ["WIF"], ["DOGE"], date(2026, 11, 2), cfg, btc_line=line)
-    assert msg.startswith("@here\n**Alt watchlist: Mon 2 Nov – Sun 8 Nov**\nBTC: daily trend Up")
+    assert msg.startswith("@here\n**Alt watchlist: Mon 2 Nov – Sun 8 Nov**\nBTC trend: weekly")
     assert "**New this week:** WIF" in msg and "**Dropped off:** DOGE" in msg
     assert "extreme funding" in msg
     assert "Import list" in msg

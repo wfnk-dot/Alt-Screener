@@ -72,3 +72,30 @@ def test_weekly_resample_mondays():
     assert [x.day.weekday() for x in w] == [0, 0]
     assert w[0].close == 7.0 and w[1].open == 7.0 and w[1].close == 14.0
     assert w[0].quote_volume == 7e6
+
+
+def test_close_below_ema25_still_up(cfg):
+    """Price dipping under EMA25 no longer cancels an uptrend (only 3 boxes now)."""
+    from screener.indicators import ema
+
+    ind = cfg["indicators"]
+    closes = zigzag(120, 0.01)
+    closes[-1] = closes[-2] * 0.93  # sharp last-candle dip
+    bars = make_bars(closes)
+    es = ema([b.close for b in bars], ind["ema_slow"])
+    assert bars[-1].close < es[-1]
+    assert trend(bars, 3, ind) == "Up"
+
+
+def test_intraday_trends_tagged(cfg):
+    from datetime import datetime, timedelta, timezone
+
+    from screener.data import Bar
+
+    start = datetime(2026, 10, 1, tzinfo=timezone.utc)
+    up = [Bar(start + timedelta(hours=4 * i), b.open, b.high, b.low, b.close, 1) for i, b in enumerate(make_bars(zigzag(200, 0.01)))]
+    down = [Bar(start + timedelta(hours=i), b.open, b.high, b.low, b.close, 1) for i, b in enumerate(make_bars(zigzag(200, -0.01)))]
+    coin = Coin("XUSDT", "X", "X", make_bars(zigzag(120, 0.0)))
+    t = tag_coin(coin, cfg, {"4h": up, "1h": down})
+    assert (t["trend_4h"], t["trend_1h"]) == ("Up", "Down")
+    assert tag_coin(coin, cfg)["trend_4h"] == "n/a"

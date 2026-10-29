@@ -49,8 +49,8 @@ def diff_lists(current, previous):
 def btc_summary(btc):
     """'BTC: daily trend Down, weekly trend Range, -3.1% this week'."""
     t = btc.tags
-    move = "" if btc.return_7d_pct is None else f", {btc.return_7d_pct:+.1f}% in 7 days"
-    return f"BTC: daily trend {t['trend_d']}, weekly trend {t['trend_w']}{move}"
+    move = "" if btc.return_7d_pct is None else f"  ·  {btc.return_7d_pct:+.1f}% in 7 days"
+    return f"BTC trend: weekly {t['trend_w']}, daily {t['trend_d']}, 4h {t['trend_4h']}, 1h {t['trend_1h']}{move}"
 
 
 def discord_message(top_coins, new, dropped, monday, cfg, btc_line="", notes=()):
@@ -111,6 +111,7 @@ def _money(v):
 
 def report_markdown(ranked, top_n, monday, run_info, rejected_counts, notes=()):
     weeks = ranked[0].tags.get("wrsi_weeks", 12) if ranked else 12
+    # 4h/1h trends are only fetched for the coins on the list
     out = [f"# {week_title(monday)}", ""]
     for k, v in run_info.items():
         out.append(f"- **{k}:** {v}")
@@ -119,7 +120,7 @@ def report_markdown(ranked, top_n, monday, run_info, rejected_counts, notes=()):
     out.append("")
     head = [
         "Rank", "Coin", "Score", "Trend", "ATR%", "Vol 7d/30d", "7d move", "Weekend move", "OI 3d", "OI 7d",
-        "Corr BTC", "Beta BTC", "Binance OI", "Binance 7d avg vol", "HL 24h vol", "HL OI", "wRSI", f"n/{weeks}", "Funding /8h", "Tags", "Candles",
+        "Corr BTC", "Beta BTC", "Binance OI", "Binance 7d avg vol", "HL 24h vol", "HL OI", "wRSI", f"wRSI {weeks}w low–high", "Funding /8h", "Tags", "Candles",
     ]
     out.append("| " + " | ".join(head) + " |")
     out.append("|" + "---|" * len(head))

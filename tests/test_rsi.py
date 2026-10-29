@@ -33,10 +33,13 @@ def test_rsi_extremes():
     assert rsi_series([5.0] * 20, 14)[-1] == 50.0
 
 
-def test_weekly_rsi_count(cfg):
+def test_weekly_rsi_range(cfg):
     ind = cfg["indicators"]
-    weekly = make_bars([100 + i for i in range(40)])  # steadily rising: RSI 100 every week
-    rsi, above, n = weekly_rsi(weekly, ind)
-    assert rsi == 100.0 and above == 12 and n == 12
-    rsi, above, _ = weekly_rsi(make_bars([100 + i for i in range(20)]), ind)
-    assert rsi == 100.0 and above is None  # only 6 RSI values: count is n/a
+    rsi, low, high = weekly_rsi(make_bars([100 + i for i in range(40)]), ind)  # steadily rising
+    assert rsi == low == high == 100.0
+    # Uptrend with one sharp pullback: the dip shows up as the low
+    closes = [100 * 1.03 ** i for i in range(30)] + [c * 0.97 ** 3 for c in [100 * 1.03 ** 29]] + [100 * 1.03 ** 26 * 1.03 ** i for i in range(1, 9)]
+    rsi, low, high = weekly_rsi(make_bars(closes), ind)
+    assert low < rsi <= high and low < 80
+    rsi, low, high = weekly_rsi(make_bars([100 + i for i in range(20)]), ind)
+    assert rsi == 100.0 and low is None and high is None  # only 6 RSI values: range is n/a

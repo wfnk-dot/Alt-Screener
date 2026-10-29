@@ -32,15 +32,18 @@ table:
   # Available:
   #   rank             position on the list
   #   coin             coin name
-  #   trend_daily      Up / Down / Range on the daily chart
   #   trend_weekly     Up / Down / Range on the weekly chart
+  #   trend_daily      Up / Down / Range on the daily chart
+  #   trend_4h         Up / Down / Range on the 4-hour chart (live)
+  #   trend_1h         Up / Down / Range on the 1-hour chart (live; goes stale fastest)
   #   atr              ATR(14) as % of price = average daily move
   #   price_7d         price change over the last 7 days (live, includes the weekend)
   #   price_weekend    price change over Saturday + Sunday (Friday close to Sunday close, or to now)
   #   oi_3d            open interest change over 3 days
   #   oi_7d            open interest change over 7 days
   #   rsi_weekly       weekly RSI(14)
-  #   rsi_weeks_above  how many of the last 12 weeks had weekly RSI above 50
+  #   rsi_range        lowest and highest weekly RSI over the last 12 weeks, e.g. 47–71
+  #                    (low ~45-50 = healthy resets; low in the 30s = it broke down)
   #   funding          current funding per 8 hours (yellow if extreme)
   #   oi_size          open interest in dollars
   #   volume_ratio     last 7 days' volume vs the 30-day average (above 1 = rising interest)
@@ -50,15 +53,17 @@ table:
   columns:
     - rank
     - coin
-    - trend_daily
     - trend_weekly
+    - trend_daily
+    - trend_4h
+    - trend_1h
     - atr
     - price_7d
     - price_weekend
     - oi_3d
     - oi_7d
     - rsi_weekly
-    - rsi_weeks_above
+    - rsi_range
     - corr_btc
     - beta_btc
 
@@ -110,9 +115,8 @@ ranking_weights:
 indicators:
   atr_period: 14
   rsi_period: 14
-  # How many recent weekly closes to check for "RSI above 50" (the n/12 tag)
+  # How many recent weeks the RSI low–high range covers
   rsi_lookback_weeks: 12
-  rsi_threshold: 50
   ema_fast: 12
   ema_slow: 25
   # Both EMAs must be higher now than this many bars ago to count as "rising"
@@ -121,6 +125,10 @@ indicators:
   # this many bars on each side
   pivot_bars_daily: 3
   pivot_bars_weekly: 2
+  pivot_bars_4h: 3
+  pivot_bars_1h: 3
+  # How many 4h / 1h candles to load for those trends
+  intraday_candles: 200
   # Force "Range" on the daily tag when the last N daily closes all sit
   # inside a band this many ATRs wide, centred on their average
   range_lookback_days: 30
@@ -211,6 +219,8 @@ data:
   bybit_url: https://api.bybit.com
   # Months of daily candles to download for each coin (for weekly trend/RSI)
   history_months: 18
+  # Pause between Hyperliquid requests (it allows a limited number per minute)
+  hyperliquid_seconds_between_calls: 1.2
   # How many downloads to run at once
   parallel_downloads: 16
   # Seconds to wait for each web request
