@@ -1,0 +1,168 @@
+# =====================================================================
+#  Alt Screener settings
+#  Edit this file on the GitHub website (pencil icon), then "Commit changes".
+#  Lines starting with # are notes and are ignored.
+#  Keep the indentation (spaces at the start of lines) exactly as it is.
+# =====================================================================
+
+# ---------------------------------------------------------------------
+#  When to post (UK time, handles GMT/BST automatically)
+# ---------------------------------------------------------------------
+schedule:
+  # Day of the week to post: Monday, Tuesday, ... Sunday
+  day: Sunday
+  # Time to post, 24-hour clock, UK time. GitHub's timer checks once an hour,
+  # and is often 5-30 minutes late, so the post lands shortly after this.
+  time: "18:00"
+  # Time zone. Leave as Europe/London.
+  timezone: Europe/London
+
+# ---------------------------------------------------------------------
+#  How many coins go on the watchlist
+# ---------------------------------------------------------------------
+top_n: 10
+
+# ---------------------------------------------------------------------
+#  Filters: a coin must pass ALL of these to be considered
+# ---------------------------------------------------------------------
+filters:
+  # Binance: average daily trading volume over the last 7 days, in US dollars
+  binance_min_avg_daily_volume_7d: 30000000      # $30M
+  # Binance: open interest (value of open positions), in US dollars
+  binance_min_open_interest: 15000000            # $15M
+  # Hyperliquid: 24-hour trading volume, in US dollars
+  hyperliquid_min_volume_24h: 3000000            # $3M
+  # Hyperliquid: open interest, in US dollars
+  hyperliquid_min_open_interest: 3000000         # $3M
+  # Movement: daily ATR(14) as a % of price. 4 means the coin moves 4% a day on average
+  min_atr_pct: 4
+  # Brand-new coins with fewer than this many daily candles skip the ATR test
+  # (there isn't enough history to measure it). Volume and OI tests still apply.
+  min_days_for_atr_filter: 15
+
+# ---------------------------------------------------------------------
+#  Ranking: how "most active" is scored. Weights should add up to 100.
+#  Each metric is turned into a 0-100% rank among the coins that passed
+#  the filters, multiplied by its weight, and summed.
+# ---------------------------------------------------------------------
+ranking_weights:
+  atr_pct: 30            # daily ATR(14) as % of price
+  volume_ratio: 25       # 7-day avg volume / 30-day avg volume (rising interest)
+  oi_change_abs: 20      # open interest change over 7 days, either direction
+  return_7d_abs: 15      # 7-day price move, either direction
+  oi_size: 10            # Binance open interest size (deeper market)
+
+# ---------------------------------------------------------------------
+#  Indicator settings
+# ---------------------------------------------------------------------
+indicators:
+  atr_period: 14
+  rsi_period: 14
+  # How many recent weekly closes to check for "RSI above 50" (the n/12 tag)
+  rsi_lookback_weeks: 12
+  rsi_threshold: 50
+  ema_fast: 12
+  ema_slow: 25
+  # Both EMAs must be higher now than this many bars ago to count as "rising"
+  ema_rising_bars: 5
+  # Swing points: a high/low is a swing if it's the highest/lowest within
+  # this many bars on each side
+  pivot_bars_daily: 3
+  pivot_bars_weekly: 2
+  # Force "Range" on the daily tag when the last N daily closes all sit
+  # inside a band this many ATRs wide, centred on their average
+  range_lookback_days: 30
+  range_band_atr_multiple: 2.5
+  # Volume ratio: compares the last 7 days to the last 30 days
+  volume_short_days: 7
+  volume_long_days: 30
+  # Days used for the "7d move" and "OI 7d change"
+  change_days: 7
+  # Fewer than this many weekly candles = "New listing" tag
+  new_listing_min_weeks: 26
+  # Funding rate (per 8 hours, in %) at or beyond which it's flagged as extreme
+  funding_extreme_pct: 0.05
+
+# ---------------------------------------------------------------------
+#  Which coins to look at
+# ---------------------------------------------------------------------
+universe:
+  # Only Binance perpetuals quoted in this currency
+  quote_asset: USDT
+  # Coins never put on the alts list. Matched on the coin name
+  # (e.g. "PEPE" also covers Binance "1000PEPEUSDT").
+  exclude:
+    # Fixed core list (always on the watchlist, see "core" below)
+    core: [BTC, ETH, SOL, HYPE]
+    # Gold and other metals
+    gold: [XAU, XAG, PAXG, XAUT, XPT, XPD]
+    # Stablecoins
+    stablecoins: [USDC, USDT, FDUSD, TUSD, USDP, BUSD, DAI, USDE, USD1, PYUSD, RLUSD, USDS, SUSD, EUR, EURC, USTC, UST]
+    # Dominance / index contracts
+    indexes: [BTCDOM, DEFI, FOOTBALL, BLUEBIRD, ALLINDEX, ALL]
+    # Tokenised stocks and tradfi (oil, indices, FX)
+    tradfi: [TSLA, NVDA, AAPL, MSFT, AMZN, GOOGL, META, COIN, MSTR, HOOD, CRCL, SPY, QQQ, NFLX, AMD, PLTR, INTC, BZ, CL, WTI, BRENT, NATGAS, SPX500, NAS100, US500, US30, JPY, GBP, AUD, CAD, CHF]
+  # Contracts whose last daily candle is older than this many days are
+  # treated as delisted/settled and skipped
+  max_days_since_last_candle: 3
+  # Manual name matches for Binance coin -> Hyperliquid coin, for names
+  # the automatic matching misses. Format:  BINANCE_NAME: HYPERLIQUID_NAME
+  # (Automatic: "1000PEPE" <-> "kPEPE", "1000000MOG" <-> "MOG", etc.)
+  hyperliquid_aliases:
+    1000PEPE: kPEPE
+    1000BONK: kBONK
+    1000SHIB: kSHIB
+    1000FLOKI: kFLOKI
+    1000LUNC: kLUNC
+    1000SATS: kSATS
+    1000CAT: kCAT
+    1000CHEEMS: kCHEEMS
+    1000000MOG: MOG
+    1000000BOB: BOB
+    1MBABYDOGE: kBABYDOGE
+    NEIRO: kNEIRO
+    DOGS: kDOGS
+    LUNA2: LUNA
+
+# ---------------------------------------------------------------------
+#  TradingView watchlist file
+# ---------------------------------------------------------------------
+tradingview:
+  # Name of the first section and its fixed symbols (always included)
+  core_section: CORE
+  core:
+    - BINANCE:BTCUSDT.P
+    - BINANCE:ETHUSDT.P
+    - BINANCE:SOLUSDT.P
+    - BINANCE:HYPEUSDT.P
+    - OANDA:XAUUSD
+  # Name of the section holding this week's alts
+  alts_section: ALTS
+  # How each alt is written. {symbol} becomes e.g. 1000PEPEUSDT
+  alt_symbol_format: "BINANCE:{symbol}.P"
+
+# ---------------------------------------------------------------------
+#  Data sources (normally no need to change)
+# ---------------------------------------------------------------------
+data:
+  # Binance public data archive
+  binance_archive_url: https://data.binance.vision
+  # Binance live API (blocked from US servers such as GitHub's; used only if it answers)
+  binance_api_url: https://fapi.binance.com
+  # Hyperliquid public API
+  hyperliquid_url: https://api.hyperliquid.xyz/info
+  # Bybit public API (backup for Binance candles)
+  bybit_url: https://api.bybit.com
+  # Months of daily candles to download for each coin (for weekly trend/RSI)
+  history_months: 18
+  # How many downloads to run at once
+  parallel_downloads: 16
+  # Seconds to wait for each web request
+  timeout_seconds: 30
+
+# ---------------------------------------------------------------------
+#  Output
+# ---------------------------------------------------------------------
+output:
+  # How many past weekly lists to keep in state.json
+  keep_weeks: 8

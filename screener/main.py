@@ -1,0 +1,224 @@
+"""Runs the weekly scan end to end."""
+import argparse
+import logging
+import os
+import sys
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from zoneinfo import ZoneInfo
+
+from .config import ROOT, load_config
+from .data import BinanceArchive, BinanceLive, Http, bybit_klines, hyperliquid_coins, parallel_map
+from .filters import apply_filters
+from .metrics import Coin, compute_metrics
+from .output import diff_lists, discord_message, post_discord, report_markdown, watchlist_text, week_of
+from .ranking import score_and_rank
+from .state import load_state, previous_list, record_week, save_state
+from .tags import tag_coin
+from .universe import base_from_symbol, excluded_names, is_excluded, match_hyperliquid
+
+log = logging.getLogger("screener")
+
+# Binance gives perpetuals a delivery date of 2100 unless they're being delisted
+_PERPETUAL_DELIVERY_FLOOR_MS = 4_000_000_000_000
+
+
+def allowed_from_exchange_info(info, quote):
+    """Symbols that are live, perpetual, crypto (not index/tradfi) and not scheduled for delisting."""
+    out = set()
+    for s in info.get("symbols", []):
+        if (
+            s.get("contractType") == "PERPETUAL"
+            and s.get("status") == "TRADING"
+            and s.get("quoteAsset") == quote
+            and s.get("underlyingType", "COIN") == "COIN"
+            and int(s.get("deliveryDate") or 0) >= _PERPETUAL_DELIVERY_FLOOR_MS
+        ):
+            out.add(s["symbol"])
+    return out
+
+
+def has_gaps(bars, recent_days=60):
+    recent = bars[-recent_days:]
+    return any((b.day - a.day).days != 1 for a, b in zip(recent, recent[1:]))
+
+
+def build_universe(cfg, archive, live, hl, notes):
+    quote = cfg["universe"]["quote_asset"]
+    symbols = archive.list_perp_symbols()
+    info = live.exchange_info()
+    if info:
+        allowed = allowed_from_exchange_info(info, quote)
+        symbols = [s for s in symbols if s in allowed] + sorted(allowed - set(symbols))
+    else:
+        notes.append("Binance live API not reachable (normal from GitHub's US servers): "
+                     "delisted contracts detected by missing recent candles instead.")
+    excluded = excluded_names(cfg)
+    bases = {}
+    for sym in symbols:
+        base = base_from_symbol(sym, quote)
+        if base and not is_excluded(base, excluded):
+            bases[base] = sym
+    hl_live = [name for name, c in hl.items() if not c.delisted]
+    matched = match_hyperliquid(list(bases), hl_live, cfg["universe"].get("hyperliquid_aliases"))
+    return [(bases[b], b, hl_name) for b, hl_name in sorted(matched.items())]
+
+
+def run(cfg, today, dry_run=False, scheduled=False, root=ROOT, now_uk=None):
+    d = cfg["data"]
+    http = Http(timeout=d["timeout_seconds"], pool=d["parallel_downloads"])
+    archive = BinanceArchive(http, d["binance_archive_url"])
+    live = BinanceLive(http, d["binance_api_url"])
+    workers = d["parallel_downloads"]
+    notes = []
+
+    log.info("Hyperliquid: fetching coins")
+    hl = hyperliquid_coins(http, d["hyperliquid_url"])
+    universe = build_universe(cfg, archive, live, hl, notes)
+    log.info("Universe: %d Binance perps also on Hyperliquid", len(universe))
+
+    coins = []
+    for sym, base, hl_name in universe:
+        h = hl[hl_name]
+        coins.append(Coin(symbol=sym, base=base, hl_name=hl_name, bars=[], hl_volume_24h=h.volume_24h, hl_oi_usd=h.oi_usd))
+
+    # Hyperliquid checks need no downloads, so do them first to save time.
+    # Coins failing them would fail the full filter anyway.
+    f = cfg["filters"]
+    rejected = {"Hyperliquid volume": 0, "Hyperliquid OI": 0}
+    candidates = []
+    for c in coins:
+        ok = True
+        if c.hl_volume_24h < f["hyperliquid_min_volume_24h"]:
+            rejected["Hyperliquid volume"] += 1
+            ok = False
+        if c.hl_oi_usd < f["hyperliquid_min_open_interest"]:
+            rejected["Hyperliquid OI"] += 1
+            ok = False
+        if ok:
+            candidates.append(c)
+    log.info("Downloading candles for %d coins", len(candidates))
+
+    klines = parallel_map(lambda s: archive.klines(s, today, d["history_months"]), [c.symbol for c in candidates], workers)
+    for c in candidates:
+        c.bars = [b for b in klines[c.symbol] if b.day < today]
+    newest = max((c.bars[-1].day for c in candidates if c.bars), default=today - timedelta(days=1))
+
+    # Bybit fallback when the archive is behind or has holes for a coin
+    bybit_used = []
+    for c in candidates:
+        if c.bars and c.bars[-1].day >= newest and not has_gaps(c.bars):
+            continue
+        try:
+            bars = [b for b in bybit_klines(http, d["bybit_url"], c.symbol) if b.day < today]
+        except Exception as e:  # noqa: BLE001
+            log.warning("Bybit fallback failed for %s: %s", c.symbol, e)
+            continue
+        if bars and (not c.bars or bars[-1].day >= c.bars[-1].day):
+            c.bars, c.source = bars, "Bybit"
+            bybit_used.append(c.base)
+    if bybit_used:
+        notes.append("Candles from Bybit (Binance archive incomplete) for: " + ", ".join(bybit_used))
+
+    stale = cfg["universe"]["max_days_since_last_candle"]
+    live_coins = [c for c in candidates if c.bars and (newest - c.bars[-1].day).days <= stale]
+    rejected["No recent candles (delisted/settling)"] = len(candidates) - len(live_coins)
+
+    log.info("Downloading open interest for %d coins", len(live_coins))
+    ch = cfg["indicators"]["change_days"]
+    oi = parallel_map(lambda s: archive.open_interest(s, today - timedelta(days=1), ch), [c.symbol for c in live_coins], workers)
+    for c in live_coins:
+        now, before = oi[c.symbol]
+        if now:
+            c.oi_usd = now.value_usd
+            if before and before.contracts:
+                c.oi_change_pct = (now.contracts / before.contracts - 1) * 100
+
+    funding = live.funding_8h()
+    for c in live_coins:
+        if funding and c.symbol in funding:
+            c.funding_8h_pct, c.funding_source = funding[c.symbol], "Binance"
+        else:
+            c.funding_8h_pct, c.funding_source = hl[c.hl_name].funding_8h_pct, "Hyperliquid"
+    if not funding:
+        notes.append("Funding from Hyperliquid (Binance live API not reachable).")
+
+    passed = []
+    for name in ("Binance 7d volume", "Binance OI", "ATR%"):
+        rejected[name] = 0
+    for c in live_coins:
+        compute_metrics(c, cfg)
+        if apply_filters(c, cfg):
+            passed.append(c)
+        for reason in c.failed:
+            rejected[reason] = rejected.get(reason, 0) + 1
+    log.info("%d coins passed the filters", len(passed))
+    if not passed:
+        raise RuntimeError("no coins passed the filters (data problem?)")
+
+    ranked = score_and_rank(passed, cfg["ranking_weights"])
+    for c in ranked:
+        tag_coin(c, cfg)
+    top = ranked[: cfg["top_n"]]
+
+    monday = week_of(today if now_uk is None else now_uk.date())
+    week_key = monday.isoformat()
+    state_path = Path(root) / "state.json"
+    state = load_state(state_path)
+    new, dropped = diff_lists([c.base for c in top], previous_list(state, week_key))
+
+    wl = watchlist_text(top, cfg)
+    msg = discord_message(top, new, dropped, monday, notes=[n for n in notes if n.startswith("Candles from Bybit")])
+    run_info = {
+        "Generated (UK time)": (now_uk or datetime.now(ZoneInfo(cfg["schedule"]["timezone"]))).strftime("%a %d %b %Y %H:%M"),
+        "Daily candles up to (UTC)": newest.isoformat(),
+        "Binance perps also on Hyperliquid (after exclusions)": len(universe),
+        "Passed all filters": len(passed),
+    }
+    report = report_markdown(ranked, cfg["top_n"], monday, run_info, rejected, notes)
+
+    latest = Path(root) / "latest"
+    history = Path(root) / "history"
+    latest.mkdir(exist_ok=True)
+    history.mkdir(exist_ok=True)
+    (latest / "watchlist.txt").write_text(wl, encoding="utf-8")
+    (latest / "report.md").write_text(report, encoding="utf-8")
+    (history / f"{week_key}-watchlist.txt").write_text(wl, encoding="utf-8")
+
+    if dry_run:
+        print("---- Discord post (dry run, not sent) ----")
+        print(msg)
+        print("---- watchlist.txt ----")
+        print(wl)
+    else:
+        url = os.environ.get("DISCORD_WEBHOOK_URL")
+        if not url:
+            raise RuntimeError("DISCORD_WEBHOOK_URL secret is not set (see SETUP.md)")
+        post_discord(url, msg, "watchlist.txt", wl)
+        record_week(state, week_key, [c.base for c in top], cfg["output"]["keep_weeks"], scheduled)
+        save_state(state_path, state)
+    return top, ranked
+
+
+def main(argv=None):
+    p = argparse.ArgumentParser(description="Weekly alt perp watchlist")
+    p.add_argument("--dry-run", action="store_true", help="print the Discord post instead of sending it")
+    p.add_argument("--scheduled", action="store_true", help="mark this as the weekly scheduled run")
+    p.add_argument("--config", default=str(ROOT / "config.yml"))
+    args = p.parse_args(argv)
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    cfg = load_config(args.config)
+    now_uk = datetime.now(ZoneInfo(cfg["schedule"]["timezone"]))
+    today = datetime.now(timezone.utc).date()
+    try:
+        run(cfg, today, dry_run=args.dry_run, scheduled=args.scheduled, now_uk=now_uk)
+    except Exception as e:
+        log.exception("Screener failed")
+        (ROOT / "run_error.txt").write_text(f"{type(e).__name__}: {e}"[:300], encoding="utf-8")
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+

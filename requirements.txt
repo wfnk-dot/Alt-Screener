@@ -1,0 +1,4 @@
+requests==2.32.3
+PyYAML==6.0.2
+tzdata==2025.2
+pytest==8.3.4
