@@ -31,7 +31,7 @@ Everything runs on GitHub for free. You only need to do steps 1 and 2 once.
 2. On the left, click **Alt Screener**.
 3. On the right, click **Run workflow** → leave "Dry run" unticked → green **Run workflow** button.
 4. Wait about 1-2 minutes (refresh the page). A green ✅ means it worked.
-5. Check Discord: you should see **"Alt watchlist, week of …"** with the table and `watchlist.txt` attached.
+5. Check Discord: you should see **"Alt watchlist: Mon … – Sun …"** with the table picture and `watchlist.txt` attached.
 
 If it shows a red ❌, Discord gets a `⚠️ Screener failed: …` message with the reason.
 Click the failed run on GitHub to see the full log.
@@ -64,6 +64,8 @@ The next run uses the new settings. Common changes:
 | Coins to never include | `universe:` → `exclude:` |
 | Binance ↔ Hyperliquid name matches | `universe:` → `hyperliquid_aliases:` |
 | Extreme funding level | `indicators:` → `funding_extreme_pct` |
+| Ping (@here / @everyone / none) | `discord:` → `ping:` |
+| Columns in the table picture | `table:` → `columns:` (delete a line to hide one, move lines to reorder) |
 
 The **Tests** run (Actions tab) checks the code still works after each change. If you break `config.yml` (usually a missing space or colon), it goes red; click **History** on the file to see and undo your change.
 

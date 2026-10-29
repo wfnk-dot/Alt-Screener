@@ -38,7 +38,11 @@ Recommendation: 1 for now, 2 if you ever see "Candles from Bybit" failing in the
   candle in the last 3 days (`max_days_since_last_candle`). A contract that's announced for delisting but still
   trading can't be spotted until it stops. Index (BTCDOM etc.) and tradfi contracts are excluded by name in
   `config.yml`; Hyperliquid's main list doesn't carry stocks, which also keeps them out.
-- **Archive lag:** daily candles lag 1-2 days, open interest about 1 day. The report shows the last candle date.
+- **Archive lag:** daily candles lag 1-2 days, open interest about 1 day, so on a Sunday the archive doesn't
+  have the weekend yet. The **price** columns (7 days, weekend) therefore use Hyperliquid's live daily candles,
+  and the 7-day price move in the ranking uses them too (falls back to the archive if Hyperliquid fails).
+  ATR, trend and RSI still use Binance candles; OI uses the Binance archive. The picture's footer shows how
+  fresh each one is.
 
 ## TradingView format
 

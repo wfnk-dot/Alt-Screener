@@ -4,7 +4,7 @@ Every Sunday (18:00 UK by default) this scans Binance USDT perpetuals, keeps the
 active on Hyperliquid, and picks the **10 most active, liquid alts** for the leverage watchlist.
 Each gets a daily and weekly trend tag. Output:
 
-- **Discord post**: top-10 table, new/dropped coins, `watchlist.txt` attached
+- **Discord post**: @here ping, top-10 table as a picture, new/dropped coins, `watchlist.txt` attached
 - **`latest/watchlist.txt`**: TradingView import file (dated copies in `history/`)
 - **`latest/report.md`**: every coin that passed the filters
 
