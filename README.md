@@ -8,6 +8,9 @@ Each gets a daily and weekly trend tag. Output:
 - **`latest/watchlist.txt`**: TradingView import file (dated copies in `history/`)
 - **`latest/report.md`**: every coin that passed the filters
 
+It also sends **Dorito alerts** (Leledc exhaustion, confirmed on candle close) for the top 50 coins on the
+4h, daily, 3-day and weekly to a separate Discord channel.
+
 Runs free on GitHub Actions. No AI, no paid services, no keys except the Discord webhook (a GitHub secret).
 Not trade advice: it picks what to watch, not what to trade.
 
