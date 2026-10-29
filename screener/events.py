@@ -181,7 +181,7 @@ def _pct(v):
     return (f"{v:+.1f}%", GREEN if v > 0 else RED if v < 0 else TEXT)
 
 
-def outlook_cards(macro, earnings, history, closes, cfg, tz, monday):
+def outlook_cards(macro, earnings, history, closes, cfg, tz, monday, start=None):
     ev = cfg["events"]
     rows = []
     items = [(e["when"], e) for e in macro] + [(e["when"] or datetime.combine(e["day"], datetime.min.time(), timezone.utc), e)
@@ -207,7 +207,8 @@ def outlook_cards(macro, earnings, history, closes, cfg, tz, monday):
             ("Type", "", "center", False), ("Forecast", "", "right", False), ("Previous", "", "right", False),
             ("BTC last", "time (day)", "right", False)]
     sunday = monday + timedelta(days=6)
-    title = f"Week ahead · Mon {week_label(monday)} – Sun {week_label(sunday)}"
+    first = start if start and start < monday else monday
+    title = f"Week ahead · {first:%a} {week_label(first)} – Sun {week_label(sunday)}"
     footer = ["Red-impact USD news (Forex Factory) and earnings from companies worth "
               f"${ev['earnings_min_market_cap'] / 1e9:,.0f}B+. Earnings times are approximate (before the open / after the close).",
               "BTC last time = BTC's move on the day this event last happened. Reminders: 1 day, 1 hour and 15 minutes before."]
@@ -247,7 +248,8 @@ def reminder_card(label, when, items, history, closes, tz):
                      (e.get("forecast") or "–", TEXT), (e.get("previous") or "–", MUTED), (last, MUTED)])
     cols = [("Event", "", "left", True), ("Type", "", "center", False), ("Forecast", "", "right", False),
             ("Previous", "", "right", False), ("BTC on the day", "last 3 times", "right", False)]
-    return render_card(f"{label} · {when.astimezone(tz):%a %d %b %H:%M} UK", "", cols, rows)
+    local = when.astimezone(tz)
+    return render_card(f"{label} · {local:%a} {local.day} {local:%b %H:%M} UK", "", cols, rows)
 
 
 # ---------------------------------------------------------------- run
@@ -293,8 +295,9 @@ def run(cfg, mode, dry_run=False, now=None):
         monday = week_of(now.astimezone(tz).date())
         week_end = datetime.combine(monday + timedelta(days=7), datetime.min.time(), tz)
         week_macro = [e for e in macro if now <= e["when"] < week_end]
-        week_earn = [e for e in earnings if now.astimezone(tz).date() <= e["day"] < week_end.date()]
-        cards = outlook_cards(week_macro, week_earn, history, closes, cfg, tz, monday)
+        week_earn = [e for e in earnings if now.astimezone(tz).date() <= e["day"] < week_end.date()
+                     and (e["when"] is None or e["when"] >= now)]
+        cards = outlook_cards(week_macro, week_earn, history, closes, cfg, tz, monday, start=now.astimezone(tz).date())
         names = [e["name"] for e in week_macro] + [e["symbol"] for e in week_earn]
         text = f"**Week ahead** · {', '.join(dict.fromkeys(names)) or 'nothing big scheduled'}"
         posts.append((text, [(f"week_{i}.png", c, "image/png") for i, c in enumerate(cards)]))

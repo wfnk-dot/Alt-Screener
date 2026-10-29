@@ -100,6 +100,33 @@ If the alerts ever stop working, GitHub emails you about the failed run.
 
 ---
 
+## 6. Mid-week movers (watchlist channel)
+
+Nothing to set up. Every **Wednesday at 18:00 UK** the screener runs again. If a coin has jumped into the
+top 10 since Sunday, the watchlist channel gets a ping with a small card of just those coins and an updated
+`watchlist.txt` (Sunday's list plus a **NEW** section). If nothing changed, it stays quiet.
+Change the days/time in `config.yml` → `schedule:` → `midweek_days` / `midweek_time` (use `[]` to switch off).
+Try it by hand: **Actions** → **Alt Screener** → **Run workflow** → tick **Mid-week movers check**.
+
+---
+
+## 7. Catalysts channel (news, FOMC, CPI, earnings)
+
+- **Sunday 17:30 UK:** the week ahead: red-folder USD news from Forex Factory (FOMC, CPI, jobs, PCE…) and
+  earnings from companies worth $500B+, plus how BTC moved the last few times each big event happened.
+- **Reminders:** 1 day, 1 hour and 15 minutes before each event.
+
+Set up (same as the Doritos one, a webhook for the news channel):
+1. In Discord, go to the news channel → ⚙️ → **Integrations** → **Webhooks** → **New Webhook** → **Copy Webhook URL**.
+2. On GitHub: **Settings** → **Secrets and variables** → **Actions** → **New repository secret**.
+3. **Name:** `DISCORD_NEWS_WEBHOOK_URL` · **Secret:** paste the link → **Add secret**.
+4. Test it: **Actions** → **Catalysts** → **Run workflow** (it posts the week ahead straight away).
+
+Settings are under `events:` in `config.yml` (post time, reminder times, which news, the earnings size cut-off,
+companies to always include).
+
+---
+
 ## Where things are
 
 - `latest/report.md`: every coin that passed the filters, with all the numbers (click it on GitHub to read it as a table).
