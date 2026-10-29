@@ -360,6 +360,7 @@ def run_midweek(cfg, top, btc_line, today, dry_run, scheduled, root, now_uk, slo
         f"**Mid-week movers** · {names} {'has' if len(movers) == 1 else 'have'} joined the top {cfg['top_n']} since Sunday"
     )
     png = render_table(movers, cfg, title=f"Mid-week movers · {now_uk:%a %d %b}", btc_line=btc_line,
+                       ranks=[top.index(c) + 1 for c in movers],
                        subtitle=f"Joined the top {cfg['top_n']} since Sunday's list. Prices live at {now_uk:%H:%M} UK.")
     # Updated TradingView file: this week's list plus the new coins in their own section
     tv = cfg["tradingview"]

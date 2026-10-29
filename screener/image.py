@@ -97,7 +97,7 @@ LEGEND = ("OI = open interest (money in open positions).  ATR = average daily mo
           "Beta 2x = moves about 2% when BTC moves 1%.")
 
 
-def render_table(coins, cfg, title, subtitle="", btc_line=""):
+def render_table(coins, cfg, title, subtitle="", btc_line="", ranks=None):
     """The weekly watchlist table."""
     keys = [k for k in cfg["table"]["columns"] if k in COLUMNS]
     ind = cfg["indicators"]
@@ -110,7 +110,8 @@ def render_table(coins, cfg, title, subtitle="", btc_line=""):
     value = {k: COLUMNS[k][3] for k in keys}
     if "rsi_range" in value:
         value["rsi_range"] = lambda i, c: _rsi_range(c, ind)
-    rows = [[value[k](i, c) for k in keys] for i, c in enumerate(coins, 1)]
+    ranks = ranks or list(range(1, len(coins) + 1))
+    rows = [[value[k](i, c) for k in keys] for i, c in zip(ranks, coins)]
     columns = [(headers[k][0], headers[k][1], COLUMNS[k][2], k == "coin") for k in keys]
     parts = [p.strip() for p in legend.split("  ") if p.strip()]
     footer = [subtitle, " ".join(parts[:3]), " ".join(parts[3:])]
