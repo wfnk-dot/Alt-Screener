@@ -50,7 +50,7 @@ def btc_summary(btc):
     """'BTC: daily trend Down, weekly trend Range, -3.1% this week'."""
     t = btc.tags
     move = "" if btc.return_7d_pct is None else f"  ·  {btc.return_7d_pct:+.1f}% in 7 days"
-    return f"BTC trend: weekly {t['trend_w']}, daily {t['trend_d']}, 4h {t['trend_4h']}, 1h {t['trend_1h']}{move}"
+    return f"BTC trend: 1h {t['trend_1h']}, 4h {t['trend_4h']}, daily {t['trend_d']}, weekly {t['trend_w']}{move}"
 
 
 def discord_message(top_coins, new, dropped, monday, cfg, btc_line="", notes=()):

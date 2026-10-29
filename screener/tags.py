@@ -103,7 +103,7 @@ def fmt_pct(v, signed=True, digits=0):
 
 
 def trend_text(t):
-    return f"W: {t['trend_w']} · D: {t['trend_d']} · 4h: {t['trend_4h']} · 1h: {t['trend_1h']}"
+    return f"1h: {t['trend_1h']} · 4h: {t['trend_4h']} · D: {t['trend_d']} · W: {t['trend_w']}"
 
 
 def rsi_text(t):

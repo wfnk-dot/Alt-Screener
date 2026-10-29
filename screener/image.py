@@ -51,26 +51,36 @@ def _rsi(c):
     return ("n/a", MUTED) if v is None else (f"{v:.0f}", TEXT)
 
 
-def _rsi_range(c):
-    low = c.tags.get("wrsi_low")
-    return ("n/a", MUTED) if low is None else (f"{low:.0f}–{c.tags['wrsi_high']:.0f}", TEXT)
+def _rsi_range(c, ind):
+    """Green: every dip held above the 'strong' level. Red: never got above the 'weak' level."""
+    low, high = c.tags.get("wrsi_low"), c.tags.get("wrsi_high")
+    if low is None:
+        return ("n/a", MUTED)
+    colour = GREEN if low >= ind["rsi_range_strong_low"] else RED if high <= ind["rsi_range_weak_high"] else TREND_COLOURS["Range"]
+    return ("pill", f"{low:.0f}–{high:.0f}", colour)
 
 
-# key: (header line 1, header line 2, alignment, value function -> (text, colour) or ("pill", trend))
+def _trend(c, key):
+    t = c.tags.get(key, "n/a")
+    return ("pill", t, TREND_COLOURS.get(t, MUTED))
+
+
+# key: (header line 1, header line 2, alignment, value function(rank, coin, indicator settings)
+#       -> (text, colour) or ("pill", text, colour))
 COLUMNS = {
     "rank": ("#", "", "right", lambda i, c: (str(i), MUTED)),
     "coin": ("Coin", "", "left", lambda i, c: (c.base, TEXT)),
-    "trend_weekly": ("Trend", "weekly", "center", lambda i, c: ("pill", c.tags.get("trend_w", "n/a"))),
-    "trend_daily": ("Trend", "daily", "center", lambda i, c: ("pill", c.tags.get("trend_d", "n/a"))),
-    "trend_4h": ("Trend", "4h", "center", lambda i, c: ("pill", c.tags.get("trend_4h", "n/a"))),
-    "trend_1h": ("Trend", "1h", "center", lambda i, c: ("pill", c.tags.get("trend_1h", "n/a"))),
+    "trend_1h": ("Trend", "1h", "center", lambda i, c: _trend(c, "trend_1h")),
+    "trend_4h": ("Trend", "4h", "center", lambda i, c: _trend(c, "trend_4h")),
+    "trend_daily": ("Trend", "daily", "center", lambda i, c: _trend(c, "trend_d")),
+    "trend_weekly": ("Trend", "weekly", "center", lambda i, c: _trend(c, "trend_w")),
     "atr": ("ATR", "daily %", "right", lambda i, c: _pct(c.atr_pct, signed=False)),
     "price_7d": ("Price", "7 days", "right", lambda i, c: _pct(c.return_7d_pct)),
     "price_weekend": ("Price", "weekend", "right", lambda i, c: _pct(c.return_weekend_pct)),
     "oi_3d": ("OI", "3 days", "right", lambda i, c: _pct(c.oi_change_3d_pct)),
     "oi_7d": ("OI", "7 days", "right", lambda i, c: _pct(c.oi_change_pct)),
     "rsi_weekly": ("RSI", "weekly", "right", lambda i, c: _rsi(c)),
-    "rsi_range": ("RSI 12w", "low–high", "right", lambda i, c: _rsi_range(c)),
+    "rsi_range": ("RSI 12w", "low–high", "center", None),  # needs the settings: filled in below
     "funding": ("Funding", "per 8h", "right", lambda i, c: _funding(c)),
     "oi_size": ("OI", "size", "right", lambda i, c: (_money(c.oi_usd), TEXT)),
     "volume_ratio": ("Volume", "7d vs 30d", "right",
@@ -83,7 +93,7 @@ COLUMNS = {
 }
 
 LEGEND = ("OI = open interest (money in open positions).  ATR = average daily move.  "
-          "RSI low–high = weekly RSI range over the last 12 weeks.  Corr = how closely it follows BTC (1 = exactly).  "
+          "RSI low–high = weekly RSI range over the last 12 weeks (green: dips held 45+, red: never above 55).  Corr = how closely it follows BTC (1 = exactly).  "
           "Beta 2x = moves about 2% when BTC moves 1%.")
 
 
@@ -94,22 +104,27 @@ def render_table(coins, cfg, title, subtitle="", btc_line=""):
     title_font, small = _font("SemiBold", 20), _font("Regular", 11)
     pad, gap, row_h, pill_pad = 24 * S, 22 * S, 36 * S, 9 * S
 
-    # Header text uses the configured RSI lookback
-    weeks = cfg["indicators"]["rsi_lookback_weeks"]
+    # Header text uses the configured RSI settings
+    ind_cfg = cfg["indicators"]
+    weeks = ind_cfg["rsi_lookback_weeks"]
     headers = {k: COLUMNS[k][:2] for k in keys}
     if "rsi_range" in headers:
         headers["rsi_range"] = (f"RSI {weeks}w", "low–high")
-    legend = LEGEND.replace("12 weeks", f"{weeks} weeks")
+    legend = (LEGEND.replace("12 weeks", f"{weeks} weeks")
+              .replace("45+", f"{ind_cfg['rsi_range_strong_low']:g}+").replace("above 55", f"above {ind_cfg['rsi_range_weak_high']:g}"))
 
+    ind = cfg["indicators"]
+    value = {k: COLUMNS[k][3] for k in keys}
+    if "rsi_range" in value:
+        value["rsi_range"] = lambda i, c: _rsi_range(c, ind)
     cells = []
     for i, c in enumerate(coins, 1):
-        cells.append([COLUMNS[k][3](i, c) for k in keys])
+        cells.append([value[k](i, c) for k in keys])
 
     def width(cell, key):
-        text, extra = cell
-        if text == "pill":
-            return bold.getlength(extra) + 2 * pill_pad
-        return (bold if key == "coin" else body).getlength(text)
+        if cell[0] == "pill":
+            return bold.getlength(cell[1]) + 2 * pill_pad
+        return (bold if key == "coin" else body).getlength(cell[0])
 
     col_w = []
     for j, k in enumerate(keys):
@@ -153,15 +168,15 @@ def render_table(coins, cfg, title, subtitle="", btc_line=""):
         x = pad
         for j, k in enumerate(keys):
             align = COLUMNS[k][2]
-            text, extra = row[j]
-            if text == "pill":
-                colour = TREND_COLOURS.get(extra, MUTED)
+            if row[j][0] == "pill":
+                _, extra, colour = row[j]
                 pw = bold.getlength(extra) + 2 * pill_pad
                 px = x + (col_w[j] - pw) / 2
                 fill = tuple(int(BG[n] * 0.8 + colour[n] * 0.2) for n in range(3))
                 d.rounded_rectangle([(px, mid - 12 * S), (px + pw, mid + 12 * S)], radius=12 * S, fill=fill)
                 d.text((px + pw / 2, mid), extra, font=bold, fill=colour, anchor="mm")
             else:
+                text, extra = row[j]
                 font = bold if k == "coin" else body
                 tw = font.getlength(text)
                 tx = x + (col_w[j] - tw if align == "right" else (col_w[j] - tw) / 2 if align == "center" else 0)

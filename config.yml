@@ -53,10 +53,10 @@ table:
   columns:
     - rank
     - coin
-    - trend_weekly
-    - trend_daily
-    - trend_4h
     - trend_1h
+    - trend_4h
+    - trend_daily
+    - trend_weekly
     - atr
     - price_7d
     - price_weekend
@@ -117,6 +117,10 @@ indicators:
   rsi_period: 14
   # How many recent weeks the RSI low–high range covers
   rsi_lookback_weeks: 12
+  # Shading of the RSI low–high cell: green if the lowest weekly RSI stayed at or
+  # above this (dips held), red if the highest never got above the next one (never strong)
+  rsi_range_strong_low: 45
+  rsi_range_weak_high: 55
   ema_fast: 12
   ema_slow: 25
   # Both EMAs must be higher now than this many bars ago to count as "rising"
