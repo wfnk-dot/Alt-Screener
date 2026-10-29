@@ -8,7 +8,7 @@ def test_note_after_breakout(cfg):
     ind = cfg["indicators"]
     closes = zigzag(80, -0.01, amp=0.0) + [zigzag(80, -0.01, amp=0.0)[-1] * 1.04 ** i for i in range(1, 25)]
     bars = make_bars(closes)
-    for b in bars[80:83]:
+    for b in bars[80:95]:
         b.quote_volume = 3e6  # breakout on 3x volume
     note = timeframe_note(bars, ind, weekly=False)
     assert note.startswith("bands green since")
