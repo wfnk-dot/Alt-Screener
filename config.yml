@@ -190,6 +190,23 @@ universe:
     LUNA2: LUNA
 
 # ---------------------------------------------------------------------
+#  Dorito alerts (Leledc exhaustion, "Exhaustion levels (InSilico)")
+#  Checked every hour; an alert only goes out once the candle has CLOSED.
+# ---------------------------------------------------------------------
+alerts:
+  # Timeframes to watch: 4h, 1d (daily), 3d (3-day), 1w (weekly)
+  timeframes: [4h, 1d, 3d, 1w]
+  # How many coins: the top N by Hyperliquid 24h volume
+  top_n: 50
+  # Skip these groups from the exclude lists under "universe" (core coins are NOT skipped)
+  exclude_groups: [stablecoins, indexes, tradfi]
+  # Same settings as the indicator: "Exhaustion bar count" and "Exhaustions swing length"
+  leledc_bar_count: 10
+  leledc_swing_length: 40
+  # Who to ping: "@here", "@everyone", or "" for none
+  ping: ""
+
+# ---------------------------------------------------------------------
 #  TradingView watchlist file
 # ---------------------------------------------------------------------
 tradingview:
