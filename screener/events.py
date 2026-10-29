@@ -230,7 +230,7 @@ def outlook_cards(macro, earnings, history, closes, cfg, tz, monday, start=None)
         cards.append(render_card("How BTC reacted last times", "BTC move vs the close the day before",
                                  [("Event", "", "left", True), ("Date", "", "left", False), ("On the", "day", "right", False),
                                   ("After", "3 days", "right", False), ("After", "7 days", "right", False)],
-                                 hist_rows, ["Past FOMC dates from the Federal Reserve. Other events are recorded as they happen."]))
+                                 hist_rows, ["Past dates: Federal Reserve (FOMC) and TradingView's economic calendar; new ones are added as they happen."]))
     return cards
 
 

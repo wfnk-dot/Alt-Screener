@@ -243,9 +243,11 @@ events:
     GDP: ["Advance GDP q/q", "Prelim GDP q/q", "Final GDP q/q"]
     PPI: ["PPI m/m", "Core PPI m/m"]
     Retail sales: ["Retail Sales m/m", "Core Retail Sales m/m"]
-  # Which of those get the "How BTC reacted last times" table, and how many past times to show
-  history_groups: [FOMC, CPI, Jobs report (NFP), PCE]
-  history_count: 4
+  # Which of those get the "How BTC reacted last times" table, and how many past times to show.
+  # Past dates are in events_history.json (a year of them was filled in from TradingView's
+  # economic calendar); new ones are added automatically as they happen.
+  history_groups: [FOMC, CPI, Jobs report (NFP), PCE, PPI, Retail sales, GDP]
+  history_count: 9
   # Sources (normally no need to change)
   calendar_url: https://nfs.faireconomy.media/ff_calendar_thisweek.json
   fomc_calendar_url: https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm
