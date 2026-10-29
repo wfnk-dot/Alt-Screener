@@ -88,3 +88,21 @@ def test_new_coin_does_not_alert_old_candles(cfg):
     series = closed_series(bars, [], now)
     found, seen = new_signals({"1d": series["1d"]}, {}, cfg, now)
     assert found == [] and "1d" in seen
+
+
+def test_alert_card_and_text():
+    import io
+    from zoneinfo import ZoneInfo
+
+    from PIL import Image
+
+    from screener.alerts import alert_card, alert_text
+
+    now = datetime(2026, 10, 29, 20, 5, tzinfo=timezone.utc)
+    recs = [
+        dict(coin="ZEC", tf="4h", sig=-1, level=1397.58, price=1362.1, bands=1, closed=datetime(2026, 10, 29, 20, tzinfo=timezone.utc)),
+        dict(coin="ENA", tf="1d", sig=1, level=0.1931, price=0.2012, bands=-1, closed=datetime(2026, 10, 29, tzinfo=timezone.utc)),
+    ]
+    img = Image.open(io.BytesIO(alert_card(recs, ZoneInfo("Europe/London"), now)))
+    assert img.format == "PNG" and img.width > 600
+    assert alert_text(recs, "@here") == "@here\n**Dorito alerts** · Daily: ENA ▲ · 4h: ZEC ▼"

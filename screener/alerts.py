@@ -11,7 +11,6 @@ import logging
 import os
 import sys
 from datetime import date, datetime, timedelta, timezone
-from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from .config import ROOT, load_config
@@ -25,9 +24,11 @@ from .data import (
     hyperliquid_coins,
     parallel_map,
 )
+from .image import GREEN, MUTED, RED, TEXT, TREND_COLOURS, render_card
 from .indicators import to_weekly
 from .output import post_discord
-from .universe import base_from_symbol, excluded_names, is_excluded, match_hyperliquid
+from .tags import colour_states
+from .universe import base_from_symbol, is_excluded, match_hyperliquid
 
 log = logging.getLogger("alerts")
 STATE = ROOT / "alerts_state.json"
@@ -119,16 +120,75 @@ def new_signals(series, last_seen, cfg, now):
     return found, seen
 
 
-def alert_lines(coin, found, tz):
-    lines = []
+TF_ORDER = {"1w": 0, "3d": 1, "1d": 2, "4h": 3}
+
+
+def alert_records(coin, found, series, price_now, ind):
+    """One dict per new Dorito, with the context shown on the card."""
+    out = []
     for tf, bar, sig in found:
-        closed = (candle_start(bar) + timedelta(hours=TF_HOURS[tf])).astimezone(tz)
-        when = closed.strftime("%a %d %b %H:%M") if tf == "4h" else closed.strftime("%a %d %b")
-        if sig == -1:
-            lines.append(f"🔻 **{coin}** {TF_LABEL[tf]} · top Dorito · high {bar.high:g} · closed {when}")
-        else:
-            lines.append(f"🔺 **{coin}** {TF_LABEL[tf]} · bottom Dorito · low {bar.low:g} · closed {when}")
-    return lines
+        bars = series[tf]
+        states, _, _ = colour_states([b.close for b in bars], ind)
+        idx = next(i for i, b in enumerate(bars) if b is bar)
+        level = bar.high if sig == -1 else bar.low
+        out.append({
+            "coin": coin, "tf": tf, "sig": sig, "level": level, "price": price_now,
+            "bands": states[idx],
+            "closed": candle_start(bar) + timedelta(hours=TF_HOURS[tf]),
+        })
+    return out
+
+
+def _fmt_price(v):
+    if v is None:
+        return "n/a"
+    if v >= 1000:
+        return f"{v:,.0f}"
+    if v >= 1:
+        return f"{v:.4g}" if v < 100 else f"{v:.2f}"
+    return f"{v:.4g}"
+
+
+def alert_card(records, tz, now, source="Binance futures"):
+    """The alert picture, in the same style as the watchlist."""
+    records = sorted(records, key=lambda r: (TF_ORDER[r["tf"]], r["sig"], r["coin"]))
+    columns = [("Coin", "", "left", True), ("Time", "frame", "left", False), ("Dorito", "", "center", False),
+               ("Level", "high / low", "right", False), ("Price", "now", "right", False),
+               ("From", "level", "right", False), ("Bands", "XO 12/25", "center", False),
+               ("Candle", "closed (UK)", "right", False)]
+    rows = []
+    for r in records:
+        top = r["sig"] == -1
+        dist = None if not r["price"] or not r["level"] else (r["price"] / r["level"] - 1) * 100
+        closed = r["closed"].astimezone(tz)
+        rows.append([
+            (r["coin"], TEXT),
+            (TF_LABEL[r["tf"]], TEXT),
+            ("pill", "Top" if top else "Bottom", RED if top else GREEN),
+            (_fmt_price(r["level"]), TEXT),
+            (_fmt_price(r["price"]), TEXT),
+            ("n/a", MUTED) if dist is None else (f"{dist:+.1f}%", GREEN if dist > 0 else RED if dist < 0 else TEXT),
+            ("pill", {1: "Green", -1: "Red"}.get(r["bands"], "n/a"),
+             {1: GREEN, -1: RED}.get(r["bands"], TREND_COLOURS["Range"])),
+            (closed.strftime("%a %d %b %H:%M") if r["tf"] == "4h" else closed.strftime("%a %d %b"), MUTED),
+        ])
+    n = len(records)
+    footer = [
+        "Confirmed on candle close. Top = Leledc exhaustion: a red candle making a 40-candle high after a run up. "
+        "Bottom = the mirror.",
+        f"Bands = XO EMA 12/25 colour on that timeframe at the Dorito.  Prices: {source}.",
+    ]
+    return render_card(f"Dorito alerts · {n} new", f"Checked {now.astimezone(tz):%a %d %b %H:%M} UK", columns, rows, footer)
+
+
+def alert_text(records, ping):
+    """Short text above the picture, so the phone notification says what fired."""
+    parts = []
+    for tf in sorted({r["tf"] for r in records}, key=TF_ORDER.get):
+        names = [f"{r['coin']} {'▼' if r['sig'] == -1 else '▲'}" for r in records if r["tf"] == tf]
+        parts.append(f"{TF_LABEL[tf]}: " + ", ".join(names))
+    text = "**Dorito alerts** · " + " · ".join(parts)
+    return (ping + "\n" + text) if ping else text
 
 
 def pick_coins(cfg, http, hl):
@@ -201,7 +261,7 @@ def run(cfg, dry_run=False, now=None):
     daily = parallel_map(lambda c: fetch(c, "1d", 4900), coins, 4) if need_daily else {}
     h4 = parallel_map(lambda c: fetch(c, "4h", 800), coins, 4) if "4h" in due else {}
 
-    lines, failed = [], []
+    records, failed = [], []
     for coin in coins:
         base, name, _ = coin
         if (need_daily and daily.get(coin) is None) or ("4h" in due and h4.get(coin) is None):
@@ -211,22 +271,25 @@ def run(cfg, dry_run=False, now=None):
         series = {tf: bars for tf, bars in series.items() if tf in due}
         found, seen = new_signals(series, state.get(name, {}), cfg, now)
         state[name] = {**state.get(name, {}), **seen}
-        lines += alert_lines(base, found, tz)
+        raw = daily.get(coin) or h4.get(coin) or []
+        records += alert_records(base, found, series, raw[-1].close if raw else None, cfg["indicators"])
     for tf in due:
         state.setdefault("_checked", {})[tf] = _last_close(tf, now).isoformat()
 
-    if lines:
-        msg = "**Dorito alerts** (confirmed on candle close)\n" + "\n".join(lines)
-        if a.get("ping"):
-            msg = a["ping"] + "\n" + msg
+    if records:
+        text = alert_text(records, a.get("ping", ""))
+        hl_for = sorted(b for b, src in sources.items() if src == "Hyperliquid")
+        source = "Binance futures" + (f" (Hyperliquid for {', '.join(hl_for)})" if hl_for else "")
+        png = alert_card(records, tz, now, source)
+        (ROOT / "latest").mkdir(exist_ok=True)
+        (ROOT / "latest" / "doritos.png").write_bytes(png)
         if dry_run:
-            print(msg)
+            print(text)
         else:
             url = os.environ.get("DISCORD_ALERTS_WEBHOOK_URL")
             if not url:
                 raise RuntimeError("DISCORD_ALERTS_WEBHOOK_URL secret is not set (see SETUP.md)")
-            for chunk in _chunks(msg):
-                post_discord(url, chunk, ping=a.get("ping", ""))
+            post_discord(url, text[:1900], [("doritos.png", png, "image/png")], ping=a.get("ping", ""))
     else:
         log.info("No new Doritos")
     hl_used = sorted(b for b, src in sources.items() if src == "Hyperliquid")
@@ -236,7 +299,7 @@ def run(cfg, dry_run=False, now=None):
         log.warning("Couldn't load candles for: %s", ", ".join(failed))
     if not dry_run:
         STATE.write_text(json.dumps(state, indent=1, sort_keys=True) + "\n")
-    return lines
+    return records
 
 
 def _last_close(tf, now):
@@ -250,16 +313,6 @@ def _last_close(tf, now):
         days = (midnight.date() - date(1970, 1, 1)).days
         return midnight - timedelta(days=days % 3)
     return midnight - timedelta(days=midnight.weekday())  # weekly: Monday 00:00 UTC
-
-
-def _chunks(text, limit=1900):
-    out, cur = [], ""
-    for line in text.split("\n"):
-        if len(cur) + len(line) + 1 > limit:
-            out.append(cur)
-            cur = ""
-        cur += line + "\n"
-    return out + [cur] if cur else out
 
 
 def main(argv=None):
