@@ -97,3 +97,29 @@ def test_bybit():
     assert len(bars) >= 2
     assert bars == sorted(bars, key=lambda b: b.day)
     assert all(b.quote_volume > 0 for b in bars)
+
+
+def test_binance_web_klines_pages_back():
+    from screener.data import binance_web_klines
+
+    day = 86_400_000
+    start = 1_700_006_400_000  # a UTC midnight
+
+    def rows(first, n):
+        return [[first + i * day, "1", "2", "0.5", "1.5", "10", first + (i + 1) * day - 1, "15", 1, "5", "7", "0"] for i in range(n)]
+
+    class PagedHttp:
+        def __init__(self):
+            self.calls = []
+
+        def request(self, method, url, params=None, **kw):
+            self.calls.append(params)
+            if "endTime" not in params:
+                return FakeResponse(payload=rows(start + 1500 * day, 1500))
+            return FakeResponse(payload=rows(start + 1000 * day, 500))
+
+    http = PagedHttp()
+    bars = binance_web_klines(http, "https://www.binance.com", "UNIUSDT", "1d", pages=2)
+    assert len(bars) == 2000 and bars == sorted(bars, key=lambda b: b.day)
+    assert http.calls[1]["endTime"] == start + 1500 * day - 1
+    assert bars[0].quote_volume == 15.0 and bars[0].high == 2.0

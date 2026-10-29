@@ -339,6 +339,32 @@ def hyperliquid_candles(http, url, coin, start_ms, end_ms, interval="1d", thrott
     return sorted(bars, key=lambda b: b.day)
 
 
+def binance_web_klines(http, base_url, symbol, interval, pages=2, throttle=None):
+    """Binance USDT-perp candles, live, via www.binance.com (reachable from GitHub's US servers,
+    unlike fapi.binance.com). Up to 1500 candles per page, oldest first; the last one may still be
+    forming. Daily-or-longer candles are keyed by UTC date, intraday by start time."""
+    bars, end = [], None
+    for _ in range(pages):
+        if throttle:
+            throttle.wait()
+        params = {"symbol": symbol, "interval": interval, "limit": 1500}
+        if end is not None:
+            params["endTime"] = end
+        rows = http.request("GET", base_url.rstrip("/") + "/fapi/v1/klines", params=params).json()
+        if not rows:
+            break
+        page = []
+        for r in rows:
+            when = datetime.fromtimestamp(int(r[0]) / 1000, tz=timezone.utc)
+            page.append(Bar(when.date() if interval.endswith(("d", "w")) else when,
+                            float(r[1]), float(r[2]), float(r[3]), float(r[4]), float(r[7])))
+        bars = page + bars
+        if len(rows) < 1500:
+            break
+        end = int(rows[0][0]) - 1
+    return bars
+
+
 # ---------------------------------------------------------------- Bybit (kline fallback)
 
 

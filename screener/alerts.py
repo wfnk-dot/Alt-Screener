@@ -1,8 +1,9 @@
 """Dorito alerts: Leledc exhaustion signals ('Exhaustion levels (InSilico)') on closed candles,
 posted to Discord. Runs every hour; each timeframe is only checked once a new candle has closed.
 
-Candles come from Hyperliquid (live and reachable from GitHub). Coins are the top N by
-Hyperliquid volume that also trade as Binance USDT perps (the symbols you chart).
+Candles come from Binance's live futures data via www.binance.com (the same prices as the
+TradingView chart), with Hyperliquid as a backup. Coins are the top N by Hyperliquid volume that also
+trade as Binance USDT perps.
 """
 import argparse
 import json
@@ -14,7 +15,16 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from .config import ROOT, load_config
-from .data import BinanceArchive, Bar, Http, Throttle, hyperliquid_candles, hyperliquid_coins, parallel_map
+from .data import (
+    Bar,
+    BinanceArchive,
+    Http,
+    Throttle,
+    binance_web_klines,
+    hyperliquid_candles,
+    hyperliquid_coins,
+    parallel_map,
+)
 from .indicators import to_weekly
 from .output import post_discord
 from .universe import base_from_symbol, excluded_names, is_excluded, match_hyperliquid
@@ -136,7 +146,8 @@ def pick_coins(cfg, http, hl):
         if not is_excluded(base, excluded):
             by_hl.setdefault(name, base)
     ranked = sorted(by_hl, key=lambda n: -live[n].volume_24h)
-    return [(by_hl[n], n) for n in ranked[: a["top_n"]]]
+    quote = cfg["universe"]["quote_asset"]
+    return [(by_hl[n], n, by_hl[n] + quote) for n in ranked[: a["top_n"]]]
 
 
 def run(cfg, dry_run=False, now=None):
@@ -160,27 +171,38 @@ def run(cfg, dry_run=False, now=None):
     hl = hyperliquid_coins(http, d["hyperliquid_url"])
     coins = pick_coins(cfg, http, hl)
     log.info("Checking %s on %d coins", ", ".join(due), len(coins))
-    throttle = Throttle(d["hyperliquid_seconds_between_calls"])
+    hl_throttle = Throttle(d["hyperliquid_seconds_between_calls"])
+    bn_throttle = Throttle(a["binance_seconds_between_calls"])
     now_ms = int(now.timestamp() * 1000)
+    sources = {}
 
-    def fetch(name, interval, days):
+    def fetch(coin, interval, days):
+        base, name, symbol = coin
         try:
-            return hyperliquid_candles(http, d["hyperliquid_url"], name, now_ms - days * 86_400_000, now_ms, interval, throttle)
+            bars = binance_web_klines(http, a["binance_web_url"], symbol, interval, pages=2, throttle=bn_throttle)
+            if bars:
+                sources[base] = "Binance"
+                return bars
+        except Exception as e:  # noqa: BLE001
+            log.warning("Binance %s candles failed for %s, using Hyperliquid: %s", interval, symbol, e)
+        try:
+            sources[base] = "Hyperliquid"
+            return hyperliquid_candles(http, d["hyperliquid_url"], name, now_ms - days * 86_400_000, now_ms, interval, hl_throttle)
         except Exception as e:  # noqa: BLE001
             log.warning("Hyperliquid %s candles failed for %s: %s", interval, name, e)
             return None
 
     need_daily = any(tf in due for tf in ("1d", "3d", "1w"))
-    names = [n for _, n in coins]
-    daily = parallel_map(lambda n: fetch(n, "1d", 4900), names, 4) if need_daily else {}
-    h4 = parallel_map(lambda n: fetch(n, "4h", 800), names, 4) if "4h" in due else {}
+    daily = parallel_map(lambda c: fetch(c, "1d", 4900), coins, 4) if need_daily else {}
+    h4 = parallel_map(lambda c: fetch(c, "4h", 800), coins, 4) if "4h" in due else {}
 
     lines, failed = [], []
-    for base, name in coins:
-        if (need_daily and daily.get(name) is None) or ("4h" in due and h4.get(name) is None):
+    for coin in coins:
+        base, name, _ = coin
+        if (need_daily and daily.get(coin) is None) or ("4h" in due and h4.get(coin) is None):
             failed.append(base)
             continue
-        series = closed_series(daily.get(name) or [], h4.get(name) or [], now)
+        series = closed_series(daily.get(coin) or [], h4.get(coin) or [], now)
         series = {tf: bars for tf, bars in series.items() if tf in due}
         found, seen = new_signals(series, state.get(name, {}), cfg, now)
         state[name] = {**state.get(name, {}), **seen}
@@ -202,6 +224,9 @@ def run(cfg, dry_run=False, now=None):
                 post_discord(url, chunk, ping=a.get("ping", ""))
     else:
         log.info("No new Doritos")
+    hl_used = sorted(b for b, src in sources.items() if src == "Hyperliquid")
+    if hl_used:
+        log.warning("Used Hyperliquid candles (Binance unavailable) for: %s", ", ".join(hl_used))
     if failed:
         log.warning("Couldn't load candles for: %s", ", ".join(failed))
     if not dry_run:
