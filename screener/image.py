@@ -98,89 +98,92 @@ LEGEND = ("OI = open interest (money in open positions).  ATR = average daily mo
 
 
 def render_table(coins, cfg, title, subtitle="", btc_line=""):
+    """The weekly watchlist table."""
     keys = [k for k in cfg["table"]["columns"] if k in COLUMNS]
+    ind = cfg["indicators"]
+    weeks = ind["rsi_lookback_weeks"]
+    headers = {k: COLUMNS[k][:2] for k in keys}
+    if "rsi_range" in headers:
+        headers["rsi_range"] = (f"RSI {weeks}w", "low–high")
+    legend = (LEGEND.replace("12 weeks", f"{weeks} weeks")
+              .replace("45+", f"{ind['rsi_range_strong_low']:g}+").replace("above 55", f"above {ind['rsi_range_weak_high']:g}"))
+    value = {k: COLUMNS[k][3] for k in keys}
+    if "rsi_range" in value:
+        value["rsi_range"] = lambda i, c: _rsi_range(c, ind)
+    rows = [[value[k](i, c) for k in keys] for i, c in enumerate(coins, 1)]
+    columns = [(headers[k][0], headers[k][1], COLUMNS[k][2], k == "coin") for k in keys]
+    parts = [p.strip() for p in legend.split("  ") if p.strip()]
+    footer = [subtitle, " ".join(parts[:3]), " ".join(parts[3:])]
+    return render_card(title, btc_line, columns, rows, footer)
+
+
+def render_card(title, subtitle, columns, rows, footer=()):
+    """House style for every Discord picture: dark card, title, optional subtitle, a table, small footer lines.
+
+    columns: [(header line 1, header line 2, "left"/"center"/"right", bold?)]
+    rows: lists of cells, each (text, colour) or ("pill", text, colour)
+    """
     body, bold = _font("Regular", 15), _font("SemiBold", 15)
     head = _font("SemiBold", 12)
     title_font, small = _font("SemiBold", 20), _font("Regular", 11)
     pad, gap, row_h, pill_pad = 24 * S, 22 * S, 36 * S, 9 * S
 
-    # Header text uses the configured RSI settings
-    ind_cfg = cfg["indicators"]
-    weeks = ind_cfg["rsi_lookback_weeks"]
-    headers = {k: COLUMNS[k][:2] for k in keys}
-    if "rsi_range" in headers:
-        headers["rsi_range"] = (f"RSI {weeks}w", "low–high")
-    legend = (LEGEND.replace("12 weeks", f"{weeks} weeks")
-              .replace("45+", f"{ind_cfg['rsi_range_strong_low']:g}+").replace("above 55", f"above {ind_cfg['rsi_range_weak_high']:g}"))
-
-    ind = cfg["indicators"]
-    value = {k: COLUMNS[k][3] for k in keys}
-    if "rsi_range" in value:
-        value["rsi_range"] = lambda i, c: _rsi_range(c, ind)
-    cells = []
-    for i, c in enumerate(coins, 1):
-        cells.append([value[k](i, c) for k in keys])
-
-    def width(cell, key):
+    def width(cell, j):
         if cell[0] == "pill":
             return bold.getlength(cell[1]) + 2 * pill_pad
-        return (bold if key == "coin" else body).getlength(cell[0])
+        return (bold if columns[j][3] else body).getlength(cell[0])
 
     col_w = []
-    for j, k in enumerate(keys):
-        w = max(head.getlength(headers[k][0]), head.getlength(headers[k][1]))
-        for row in cells:
-            w = max(w, width(row[j], k))
+    for j, col in enumerate(columns):
+        w = max(head.getlength(col[0]), head.getlength(col[1]))
+        for row in rows:
+            w = max(w, width(row[j], j))
         col_w.append(int(w))
 
-    table_w = sum(col_w) + gap * (len(keys) - 1)
-    parts = [p.strip() for p in legend.split("  ") if p.strip()]
-    legend_lines = [" ".join(parts[:3]), " ".join(parts[3:])]
-    lines_below = [x for x in (subtitle, *legend_lines) if x]
-    total_w = max(table_w, int(max([title_font.getlength(title)] + [small.getlength(x) for x in lines_below]))) + 2 * pad
-    title_h = (64 if btc_line else 40) * S
+    table_w = sum(col_w) + gap * (len(columns) - 1)
+    lines_below = [x for x in footer if x]
+    total_w = max(table_w, int(max([title_font.getlength(title), _font("Regular", 14).getlength(subtitle or "")]
+                                   + [small.getlength(x) for x in lines_below]))) + 2 * pad
+    title_h = (64 if subtitle else 40) * S
     head_h = 40 * S
     foot_h = (18 * S) * len(lines_below) + 12 * S
-    total_h = pad + title_h + head_h + row_h * len(cells) + foot_h + pad
+    total_h = pad + title_h + head_h + row_h * len(rows) + foot_h + pad
 
     img = Image.new("RGB", (total_w, total_h), BG)
     d = ImageDraw.Draw(img)
     d.text((pad, pad), title, font=title_font, fill=TEXT)
-    if btc_line:
-        d.text((pad, pad + 30 * S), btc_line, font=_font("Regular", 14), fill=MUTED)
+    if subtitle:
+        d.text((pad, pad + 30 * S), subtitle, font=_font("Regular", 14), fill=MUTED)
+
+    def x_for(align, x, colw, tw):
+        return x + (colw - tw if align == "right" else (colw - tw) / 2 if align == "center" else 0)
 
     y = pad + title_h
     x = pad
-    for j, k in enumerate(keys):
-        align = COLUMNS[k][2]
-        for line_no, text in enumerate(headers[k]):
-            tw = head.getlength(text)
-            tx = x + (col_w[j] - tw if align == "right" else (col_w[j] - tw) / 2 if align == "center" else 0)
-            d.text((tx, y + line_no * 16 * S), text, font=head, fill=MUTED)
+    for j, col in enumerate(columns):
+        for line_no, text in enumerate(col[:2]):
+            d.text((x_for(col[2], x, col_w[j], head.getlength(text)), y + line_no * 16 * S), text, font=head, fill=MUTED)
         x += col_w[j] + gap
     y += head_h
     d.line([(pad, y - 6 * S), (pad + table_w, y - 6 * S)], fill=LINE, width=S)
 
-    for r, row in enumerate(cells):
+    for r, row in enumerate(rows):
         if r % 2 == 1:
             d.rectangle([(pad - 10 * S, y), (pad + table_w + 10 * S, y + row_h)], fill=ROW_ALT)
         mid = y + row_h / 2
         x = pad
-        for j, k in enumerate(keys):
-            align = COLUMNS[k][2]
+        for j, col in enumerate(columns):
             if row[j][0] == "pill":
-                _, extra, colour = row[j]
-                pw = bold.getlength(extra) + 2 * pill_pad
+                _, text, colour = row[j]
+                pw = bold.getlength(text) + 2 * pill_pad
                 px = x + (col_w[j] - pw) / 2
                 fill = tuple(int(BG[n] * 0.8 + colour[n] * 0.2) for n in range(3))
                 d.rounded_rectangle([(px, mid - 12 * S), (px + pw, mid + 12 * S)], radius=12 * S, fill=fill)
-                d.text((px + pw / 2, mid), extra, font=bold, fill=colour, anchor="mm")
+                d.text((px + pw / 2, mid), text, font=bold, fill=colour, anchor="mm")
             else:
-                text, extra = row[j]
-                font = bold if k == "coin" else body
-                tw = font.getlength(text)
-                tx = x + (col_w[j] - tw if align == "right" else (col_w[j] - tw) / 2 if align == "center" else 0)
-                d.text((tx, mid), text, font=font, fill=extra, anchor="lm")
+                text, colour = row[j]
+                font = bold if col[3] else body
+                d.text((x_for(col[2], x, col_w[j], font.getlength(text)), mid), text, font=font, fill=colour, anchor="lm")
             x += col_w[j] + gap
         y += row_h
 
