@@ -14,7 +14,7 @@ def main():
     checks = {
         "Binance archive listing": lambda: f"{len(archive.list_perp_symbols())} symbols",
         "Binance archive klines": lambda: f"{len(archive.klines('BTCUSDT', date.today(), 1))} daily candles",
-        "Binance archive metrics": lambda: str(archive.open_interest("BTCUSDT", date.today() - timedelta(days=1), 7)[0]),
+        "Binance archive metrics": lambda: str(archive.open_interest("BTCUSDT", date.today() - timedelta(days=1), [3, 7])[0]),
         "Hyperliquid": lambda: f"{len(hyperliquid_coins(http, d['hyperliquid_url']))} coins",
         "Bybit klines": lambda: f"{len(bybit_klines(http, d['bybit_url'], 'BTCUSDT', 30))} candles",
         "Binance live exchangeInfo": lambda: "ok" if BinanceLive(http, d["binance_api_url"]).exchange_info() else "unreachable",

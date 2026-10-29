@@ -1,5 +1,6 @@
 """Per-coin numbers used by the filters, ranking and report."""
 from dataclasses import dataclass, field
+from datetime import timedelta
 
 from .indicators import atr_pct
 
@@ -15,6 +16,9 @@ class Coin:
     hl_oi_usd: float = 0.0
     oi_usd: float | None = None          # Binance OI, USD
     oi_change_pct: float | None = None   # Binance OI (contracts) change over the week, %
+    oi_change_3d_pct: float | None = None  # same over 3 days
+    return_weekend_pct: float | None = None  # Friday close -> Sunday close (or now, mid-weekend)
+    price_source: str = "Binance archive"
     funding_8h_pct: float | None = None
     funding_source: str = ""
     # filled by compute_metrics
@@ -44,4 +48,23 @@ def compute_metrics(coin, cfg):
     coin.atr_pct = atr_pct(bars, ind["atr_period"])
     if len(bars) > ch and bars[-ch - 1].close:
         coin.return_7d_pct = (bars[-1].close / bars[-ch - 1].close - 1) * 100
+    return coin
+
+
+def live_price_changes(coin, hl_bars, today):
+    """Price moves from Hyperliquid's daily candles, which run up to now (the Binance archive lags
+    1-2 days, so it never has the weekend on a Sunday). Sets the 7-day and weekend moves."""
+    by_day = {b.day: b for b in hl_bars}
+    if not hl_bars or hl_bars[-1].day != today:
+        return coin
+    now = hl_bars[-1].close
+    week_ago = by_day.get(today - timedelta(days=7))
+    if week_ago and week_ago.close:
+        coin.return_7d_pct = (now / week_ago.close - 1) * 100
+        coin.price_source = "Hyperliquid (live)"
+    saturday = today - timedelta(days=(today.weekday() - 5) % 7)
+    sat, sun = by_day.get(saturday), by_day.get(saturday + timedelta(days=1))
+    if sat and sat.open:
+        end = sun.close if sun else sat.close
+        coin.return_weekend_pct = (end / sat.open - 1) * 100
     return coin

@@ -199,20 +199,23 @@ class BinanceArchive:
                 return OIPoint(day, c, v)
         return None
 
-    def open_interest(self, symbol, latest_day, change_days, search_back=4):
-        """(latest OI, OI `change_days` earlier). Either may be None."""
+    def open_interest(self, symbol, latest_day, lookbacks, search_back=4):
+        """(latest OI, {days: OI that many days earlier}). Missing readings are None."""
         now = None
         for k in range(search_back + 1):
             now = self.metrics_day(symbol, latest_day - timedelta(days=k))
             if now:
                 break
         if not now:
-            return None, None
-        before = None
-        for k in range(2):
-            before = self.metrics_day(symbol, now.day - timedelta(days=change_days + k))
-            if before:
-                break
+            return None, {}
+        before = {}
+        for days in lookbacks:
+            point = None
+            for k in range(2):
+                point = self.metrics_day(symbol, now.day - timedelta(days=days + k))
+                if point:
+                    break
+            before[days] = point
         return now, before
 
 
@@ -281,6 +284,29 @@ def hyperliquid_coins(http, url):
         except (TypeError, ValueError):
             continue
     return out
+
+
+def hyperliquid_candles(http, url, coin, start_ms, end_ms):
+    """Hyperliquid daily candles (UTC days). The last one is today's, still forming, so its
+    close is the live price."""
+    r = http.request(
+        "POST",
+        url,
+        json={"type": "candleSnapshot", "req": {"coin": coin, "interval": "1d", "startTime": start_ms, "endTime": end_ms}},
+    )
+    bars = []
+    for c in r.json():
+        bars.append(
+            Bar(
+                day=datetime.fromtimestamp(int(c["t"]) / 1000, tz=timezone.utc).date(),
+                open=float(c["o"]),
+                high=float(c["h"]),
+                low=float(c["l"]),
+                close=float(c["c"]),
+                quote_volume=float(c["v"]) * float(c["c"]),
+            )
+        )
+    return sorted(bars, key=lambda b: b.day)
 
 
 # ---------------------------------------------------------------- Bybit (kline fallback)

@@ -8,10 +8,19 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from .config import ROOT, load_config
-from .data import BinanceArchive, BinanceLive, Http, bybit_klines, hyperliquid_coins, parallel_map
+from .data import (
+    BinanceArchive,
+    BinanceLive,
+    Http,
+    bybit_klines,
+    hyperliquid_candles,
+    hyperliquid_coins,
+    parallel_map,
+)
+from .image import render_table
 from .filters import apply_filters
-from .metrics import Coin, compute_metrics
-from .output import diff_lists, discord_message, post_discord, report_markdown, watchlist_text, week_of
+from .metrics import Coin, compute_metrics, live_price_changes
+from .output import diff_lists, discord_message, post_discord, report_markdown, watchlist_text, week_of, week_title
 from .ranking import score_and_rank
 from .state import load_state, previous_list, record_week, save_state
 from .tags import tag_coin
@@ -126,13 +135,33 @@ def run(cfg, today, dry_run=False, scheduled=False, root=ROOT, now_uk=None):
 
     log.info("Downloading open interest for %d coins", len(live_coins))
     ch = cfg["indicators"]["change_days"]
-    oi = parallel_map(lambda s: archive.open_interest(s, today - timedelta(days=1), ch), [c.symbol for c in live_coins], workers)
+    short = cfg["indicators"]["oi_short_change_days"]
+    oi = parallel_map(
+        lambda s: archive.open_interest(s, today - timedelta(days=1), [short, ch]), [c.symbol for c in live_coins], workers
+    )
+    oi_day = None
     for c in live_coins:
         now, before = oi[c.symbol]
         if now:
             c.oi_usd = now.value_usd
-            if before and before.contracts:
-                c.oi_change_pct = (now.contracts / before.contracts - 1) * 100
+            oi_day = max(oi_day or now.day, now.day)
+            if before.get(ch) and before[ch].contracts:
+                c.oi_change_pct = (now.contracts / before[ch].contracts - 1) * 100
+            if before.get(short) and before[short].contracts:
+                c.oi_change_3d_pct = (now.contracts / before[short].contracts - 1) * 100
+
+    # Live prices from Hyperliquid, so price moves include the weekend
+    start_ms = int(datetime.combine(today - timedelta(days=10), datetime.min.time(), timezone.utc).timestamp() * 1000)
+    end_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+
+    def hl_bars(name):
+        try:
+            return hyperliquid_candles(http, d["hyperliquid_url"], name, start_ms, end_ms)
+        except Exception as e:  # noqa: BLE001
+            log.warning("Hyperliquid candles failed for %s: %s", name, e)
+            return []
+
+    hl_candles = parallel_map(hl_bars, [c.hl_name for c in live_coins], min(workers, 4))
 
     funding = live.funding_8h()
     for c in live_coins:
@@ -148,6 +177,7 @@ def run(cfg, today, dry_run=False, scheduled=False, root=ROOT, now_uk=None):
         rejected[name] = 0
     for c in live_coins:
         compute_metrics(c, cfg)
+        live_price_changes(c, hl_candles[c.hl_name], today)
         if apply_filters(c, cfg):
             passed.append(c)
         for reason in c.failed:
@@ -167,10 +197,16 @@ def run(cfg, today, dry_run=False, scheduled=False, root=ROOT, now_uk=None):
     state = load_state(state_path)
     new, dropped = diff_lists([c.base for c in top], previous_list(state, week_key))
 
+    now_uk = now_uk or datetime.now(ZoneInfo(cfg["schedule"]["timezone"]))
     wl = watchlist_text(top, cfg)
-    msg = discord_message(top, new, dropped, monday, notes=[n for n in notes if n.startswith("Candles from Bybit")])
+    msg = discord_message(top, new, dropped, monday, cfg, notes=[n for n in notes if n.startswith("Candles from Bybit")])
+    live = any(c.price_source.startswith("Hyperliquid") for c in top)
+    prices = f"Prices: Hyperliquid, live at {now_uk:%a %d %b %H:%M} UK." if live else f"Prices: Binance daily candles to {newest:%a %d %b}."
+    oi_text = f"OI: Binance, to end of {oi_day:%a %d %b}." if oi_day else ""
+    footer = f"{prices}  {oi_text}  ATR & trend: Binance daily candles to {newest:%a %d %b}."
+    png = render_table(top, cfg, title=week_title(monday), subtitle=footer)
     run_info = {
-        "Generated (UK time)": (now_uk or datetime.now(ZoneInfo(cfg["schedule"]["timezone"]))).strftime("%a %d %b %Y %H:%M"),
+        "Generated (UK time)": now_uk.strftime("%a %d %b %Y %H:%M"),
         "Daily candles up to (UTC)": newest.isoformat(),
         "Binance perps also on Hyperliquid (after exclusions)": len(universe),
         "Passed all filters": len(passed),
@@ -183,6 +219,7 @@ def run(cfg, today, dry_run=False, scheduled=False, root=ROOT, now_uk=None):
     history.mkdir(exist_ok=True)
     (latest / "watchlist.txt").write_text(wl, encoding="utf-8")
     (latest / "report.md").write_text(report, encoding="utf-8")
+    (latest / "table.png").write_bytes(png)
     (history / f"{week_key}-watchlist.txt").write_text(wl, encoding="utf-8")
 
     if dry_run:
@@ -194,7 +231,8 @@ def run(cfg, today, dry_run=False, scheduled=False, root=ROOT, now_uk=None):
         url = os.environ.get("DISCORD_WEBHOOK_URL")
         if not url:
             raise RuntimeError("DISCORD_WEBHOOK_URL secret is not set (see SETUP.md)")
-        post_discord(url, msg, "watchlist.txt", wl)
+        post_discord(url, msg, [("table.png", png, "image/png"), ("watchlist.txt", wl.encode(), "text/plain")],
+                     ping=cfg["discord"]["ping"])
         record_week(state, week_key, [c.base for c in top], cfg["output"]["keep_weeks"], scheduled)
         save_state(state_path, state)
     return top, ranked

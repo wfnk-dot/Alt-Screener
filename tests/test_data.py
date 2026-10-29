@@ -57,8 +57,9 @@ def test_archive_metrics():
 def test_archive_open_interest_change():
     blob = (DATA / "PEPE-metrics-2026-10-27.zip").read_bytes()
     http = FakeHttp({"metrics-2026-10-27.zip": FakeResponse(blob), "metrics-2026-10-20.zip": FakeResponse(blob)})
-    now, before = BinanceArchive(http, "x").open_interest("1000PEPEUSDT", date(2026, 10, 28), 7)
-    assert now.day == date(2026, 10, 27) and before.day == date(2026, 10, 20)
+    now, before = BinanceArchive(http, "x").open_interest("1000PEPEUSDT", date(2026, 10, 28), [3, 7])
+    assert now.day == date(2026, 10, 27) and before[7].day == date(2026, 10, 20)
+    assert before[3] is None  # 24th/23rd not recorded in this test
 
 
 def test_archive_listing():

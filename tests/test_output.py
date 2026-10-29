@@ -1,9 +1,15 @@
+import io
+import json
 from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
 from screener.gate import last_slot, should_run
 from screener.metrics import Coin
-from screener.output import diff_lists, discord_message, watchlist_text, week_label, week_of
+from PIL import Image
+
+from screener import output
+from screener.image import render_table
+from screener.output import diff_lists, discord_message, post_discord, watchlist_text, week_label, week_of, week_title
 from screener.state import load_state, previous_list, record_week
 from screener.tags import tag_coin
 from tests.conftest import make_bars, zigzag
@@ -65,15 +71,48 @@ def test_discord_message(cfg):
         tag_coin(c, cfg)
     cs[1].funding_8h_pct = 0.08
     cs[1].tags["funding_extreme"] = True
-    msg = discord_message(cs, ["WIF"], ["DOGE"], date(2026, 11, 2))
-    assert msg.startswith("**Alt watchlist, week of 2 Nov**")
-    assert "D: Up · W: " in msg
-    assert "5.2%" in msg or "5.3%" in msg
-    assert "+12%" in msg and "-8%" in msg
+    msg = discord_message(cs, ["WIF"], ["DOGE"], date(2026, 11, 2), cfg)
+    assert msg.startswith("@here\n**Alt watchlist: Mon 2 Nov – Sun 8 Nov**")
     assert "**New this week:** WIF" in msg and "**Dropped off:** DOGE" in msg
     assert "extreme funding" in msg
     assert "Import list" in msg
-    assert len(msg) < 2000
+    cfg["discord"]["ping"] = ""
+    assert discord_message(cs, [], [], date(2026, 11, 2), cfg).startswith("**Alt watchlist")
+
+
+def test_week_title_across_months():
+    assert week_title(date(2026, 11, 30)) == "Alt watchlist: Mon 30 Nov – Sun 6 Dec"
+
+
+def test_post_discord_ping_and_files(monkeypatch):
+    sent = {}
+
+    class R:
+        status_code = 200
+
+    def fake_post(url, data, files, timeout):
+        sent.update(url=url, payload=json.loads(data["payload_json"]), files=files)
+        return R()
+
+    monkeypatch.setattr(output.requests, "post", fake_post)
+    post_discord("https://discord/hook", "@here hi", [("table.png", b"x", "image/png"), ("watchlist.txt", b"y", "text/plain")], ping="@here")
+    assert sent["url"].endswith("?wait=true")
+    assert sent["payload"]["allowed_mentions"] == {"parse": ["everyone"]}
+    assert list(sent["files"]) == ["files[0]", "files[1]"]
+    post_discord("https://discord/hook", "hi", [], ping="")
+    assert sent["payload"]["allowed_mentions"] == {"parse": []}
+
+
+def test_table_image(cfg):
+    cs = coins("1000PEPE", "WIF", "ZEC")
+    for c in cs:
+        tag_coin(c, cfg)
+    png = render_table(cs, cfg, title="Alt watchlist: Mon 2 Nov – Sun 8 Nov", subtitle="Prices: test")
+    img = Image.open(io.BytesIO(png))
+    assert img.format == "PNG" and img.width > 800 and img.height > 200
+    cfg["table"]["columns"] = ["rank", "coin"]
+    narrow = Image.open(io.BytesIO(render_table(cs, cfg, title="x")))
+    assert narrow.width < img.width
 
 
 def test_gate_handles_gmt_and_bst():

@@ -18,6 +18,48 @@ schedule:
   timezone: Europe/London
 
 # ---------------------------------------------------------------------
+#  Discord post
+# ---------------------------------------------------------------------
+discord:
+  # Who to ping at the top of the post: "@here", "@everyone", or "" for no ping
+  ping: "@here"
+
+# ---------------------------------------------------------------------
+#  The table picture in the Discord post
+# ---------------------------------------------------------------------
+table:
+  # Columns, left to right. Delete a line to hide a column, or move lines to reorder.
+  # Available:
+  #   rank             position on the list
+  #   coin             coin name
+  #   trend_daily      Up / Down / Range on the daily chart
+  #   trend_weekly     Up / Down / Range on the weekly chart
+  #   atr              ATR(14) as % of price = average daily move
+  #   price_7d         price change over the last 7 days (live, includes the weekend)
+  #   price_weekend    price change over Saturday + Sunday (Friday close to Sunday close, or to now)
+  #   oi_3d            open interest change over 3 days
+  #   oi_7d            open interest change over 7 days
+  #   rsi_weekly       weekly RSI(14)
+  #   rsi_weeks_above  how many of the last 12 weeks had weekly RSI above 50
+  #   funding          current funding per 8 hours (yellow if extreme)
+  #   oi_size          open interest in dollars
+  #   volume_ratio     last 7 days' volume vs the 30-day average (above 1 = rising interest)
+  #   score            the ranking score (0-100)
+  columns:
+    - rank
+    - coin
+    - trend_daily
+    - trend_weekly
+    - atr
+    - price_7d
+    - price_weekend
+    - oi_3d
+    - oi_7d
+    - rsi_weekly
+    - rsi_weeks_above
+    - funding
+
+# ---------------------------------------------------------------------
 #  How many coins go on the watchlist
 # ---------------------------------------------------------------------
 top_n: 10
@@ -78,6 +120,8 @@ indicators:
   volume_long_days: 30
   # Days used for the "7d move" and "OI 7d change"
   change_days: 7
+  # Days used for the shorter "OI 3 days" change
+  oi_short_change_days: 3
   # Fewer than this many weekly candles = "New listing" tag
   new_listing_min_weeks: 26
   # Funding rate (per 8 hours, in %) at or beyond which it's flagged as extreme

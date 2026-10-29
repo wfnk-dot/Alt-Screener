@@ -18,6 +18,12 @@ def week_label(monday):
     return f"{monday.day} {monday:%b}"
 
 
+def week_title(monday):
+    """'Alt watchlist: Mon 2 Nov – Sun 8 Nov'."""
+    sunday = monday + timedelta(days=6)
+    return f"Alt watchlist: Mon {week_label(monday)} – Sun {week_label(sunday)}"
+
+
 # ---------------------------------------------------------------- TradingView
 
 
@@ -40,34 +46,13 @@ def diff_lists(current, previous):
     return [c for c in current if c not in prev], [c for c in previous if c not in cur]
 
 
-def _table(coins):
-    weeks = coins[0].tags.get("wrsi_weeks", 12) if coins else 12
-    rows = [["#", "Coin", "Trend", "ATR%", "7d", "OI 7d", "wRSI", f"n/{weeks}"]]
-    for i, c in enumerate(coins, 1):
-        rsi, above = rsi_text(c.tags)
-        rows.append(
-            [
-                str(i),
-                c.base,
-                trend_text(c.tags),
-                fmt_pct(c.atr_pct, signed=False, digits=1),
-                fmt_pct(c.return_7d_pct),
-                fmt_pct(c.oi_change_pct),
-                rsi,
-                above,
-            ]
-        )
-    widths = [max(len(r[i]) for r in rows) for i in range(len(rows[0]))]
-    right = {0, 3, 4, 5, 6, 7}
+def discord_message(top_coins, new, dropped, monday, cfg, notes=()):
+    """Short text that goes above the table image."""
     lines = []
-    for r in rows:
-        cells = [v.rjust(w) if i in right else v.ljust(w) for i, (v, w) in enumerate(zip(r, widths))]
-        lines.append(" ".join(cells).rstrip())
-    return "\n".join(lines)
-
-
-def discord_message(top_coins, new, dropped, monday, notes=()):
-    lines = [f"**Alt watchlist, week of {week_label(monday)}**", "```", _table(top_coins), "```"]
+    ping = (cfg.get("discord") or {}).get("ping") or ""
+    if ping:
+        lines.append(ping)
+    lines.append(f"**{week_title(monday)}**")
     lines.append("**New this week:** " + (", ".join(new) if new else "none"))
     lines.append("**Dropped off:** " + (", ".join(dropped) if dropped else "none"))
     extras = []
@@ -87,15 +72,16 @@ def discord_message(top_coins, new, dropped, monday, notes=()):
     return "\n".join(lines)
 
 
-def post_discord(webhook_url, content, attachment_name=None, attachment_text=None):
-    payload = {"content": content[:2000], "allowed_mentions": {"parse": []}}
-    files = None
-    if attachment_text is not None:
-        files = {"files[0]": (attachment_name, attachment_text.encode(), "text/plain")}
+def post_discord(webhook_url, content, attachments=(), ping=""):
+    """attachments: list of (filename, bytes, content type)."""
+    # Discord only pings @here/@everyone if the post explicitly allows it
+    parse = ["everyone"] if ping in ("@here", "@everyone") else []
+    payload = {"content": content[:2000], "allowed_mentions": {"parse": parse}}
+    files = {f"files[{i}]": a for i, a in enumerate(attachments)}
     r = requests.post(
         webhook_url + ("&" if "?" in webhook_url else "?") + "wait=true",
         data={"payload_json": json.dumps(payload)},
-        files=files,
+        files=files or None,
         timeout=30,
     )
     if r.status_code >= 300:
@@ -116,14 +102,14 @@ def _money(v):
 
 def report_markdown(ranked, top_n, monday, run_info, rejected_counts, notes=()):
     weeks = ranked[0].tags.get("wrsi_weeks", 12) if ranked else 12
-    out = [f"# Alt watchlist, week of {week_label(monday)}", ""]
+    out = [f"# {week_title(monday)}", ""]
     for k, v in run_info.items():
         out.append(f"- **{k}:** {v}")
     out.append("")
     out.append(f"## All {len(ranked)} coins that passed the filters (top {top_n} go on the watchlist)")
     out.append("")
     head = [
-        "Rank", "Coin", "Score", "Trend", "ATR%", "Vol 7d/30d", "7d move", "OI 7d",
+        "Rank", "Coin", "Score", "Trend", "ATR%", "Vol 7d/30d", "7d move", "Weekend move", "OI 3d", "OI 7d",
         "Binance OI", "Binance 7d avg vol", "HL 24h vol", "HL OI", "wRSI", f"n/{weeks}", "Funding /8h", "Tags", "Candles",
     ]
     out.append("| " + " | ".join(head) + " |")
@@ -144,6 +130,8 @@ def report_markdown(ranked, top_n, monday, run_info, rejected_counts, notes=()):
             fmt_pct(c.atr_pct, signed=False, digits=1),
             "n/a" if c.vol_ratio is None else f"{c.vol_ratio:.2f}",
             fmt_pct(c.return_7d_pct, digits=1),
+            fmt_pct(c.return_weekend_pct, digits=1),
+            fmt_pct(c.oi_change_3d_pct, digits=1),
             fmt_pct(c.oi_change_pct, digits=1),
             _money(c.oi_usd),
             _money(c.avg_vol_7d),

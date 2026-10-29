@@ -69,3 +69,22 @@ def test_metrics(cfg):
     assert c.avg_vol_7d == 20e6
     assert abs(c.vol_ratio - 20 / ((7 * 20 + 23 * 10) / 30)) < 1e-9
     assert abs(c.return_7d_pct - (c.bars[-1].close / c.bars[-8].close - 1) * 100) < 1e-9
+
+
+def test_live_price_changes():
+    from datetime import date
+
+    from screener.data import Bar
+    from screener.metrics import live_price_changes
+
+    today = date(2026, 11, 1)  # Sunday
+    closes = {date(2026, 10, 25): 100.0, date(2026, 10, 30): 110.0, date(2026, 10, 31): 120.0, today: 99.0}
+    bars = [Bar(d, 0, 0, 0, c, 0) for d, c in sorted(closes.items())]
+    bars[2].open = 110.0  # Saturday opens at Friday's close
+    c = live_price_changes(Coin("X", "X", "X", []), bars, today)
+    assert round(c.return_7d_pct, 6) == -1.0          # 100 -> 99
+    assert round(c.return_weekend_pct, 6) == -10.0    # Sat open 110 -> Sun now 99
+    assert c.price_source == "Hyperliquid (live)"
+    # Midweek: weekend = last Saturday + Sunday, complete
+    stale = live_price_changes(Coin("X", "X", "X", []), bars[:-1], today)
+    assert stale.return_7d_pct is None  # no candle for today: leave the archive numbers alone
