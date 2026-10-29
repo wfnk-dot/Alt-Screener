@@ -20,6 +20,12 @@ def main():
     week = sys.argv[sys.argv.index("--mark-week") + 1] if "--mark-week" in sys.argv else None
     if week:
         mark_week_done(week)
+    if "--mark-midweek" in sys.argv:
+        week = sys.argv[sys.argv.index("--mark-midweek") + 1]  # also means "don't retry"
+        path = ROOT / "state.json"
+        state = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {"weeks": {}}
+        state["last_midweek_slot"] = week
+        path.write_text(json.dumps(state, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     url = os.environ.get("DISCORD_WEBHOOK_URL")
     if not url:
         print("No DISCORD_WEBHOOK_URL secret; can't report the failure to Discord.")

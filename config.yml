@@ -16,6 +16,11 @@ schedule:
   time: "18:00"
   # Time zone. Leave as Europe/London.
   timezone: Europe/London
+  # Mid-week movers: on these days the screener runs again and pings the watchlist channel
+  # if a coin has jumped into the top 10 since Sunday's list (silent if nothing changed).
+  # Use [] to switch it off, or add days, e.g. [Tuesday, Thursday].
+  midweek_days: [Wednesday]
+  midweek_time: "18:00"
 
 # ---------------------------------------------------------------------
 #  Discord post

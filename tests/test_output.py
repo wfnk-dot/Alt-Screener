@@ -55,7 +55,8 @@ def test_state_previous_week():
 
 
 def test_load_missing_state(tmp_path):
-    assert load_state(tmp_path / "nope.json") == {"weeks": {}, "last_scheduled_week": None}
+    assert load_state(tmp_path / "nope.json") == {"weeks": {}, "last_scheduled_week": None,
+                                                  "last_midweek_slot": None, "midweek_pinged": {}}
 
 
 def test_week_of():
@@ -145,3 +146,25 @@ def test_gate_runs_once_and_catches_up():
 def test_last_slot():
     now = datetime(2026, 11, 1, 17, 59, tzinfo=UK)
     assert last_slot(now, "Sunday", "18:00") == datetime(2026, 10, 25, 18, 0, tzinfo=UK)
+
+
+def test_midweek_slot_due():
+    from screener.gate import midweek_slot_due
+
+    sched = {"day": "Sunday", "time": "18:00", "midweek_days": ["Wednesday"], "midweek_time": "18:00"}
+    wed = datetime(2026, 11, 4, 18, 7, tzinfo=UK)
+    slot = midweek_slot_due(wed, sched, None)
+    assert slot == datetime(2026, 11, 4, 18, 0, tzinfo=UK).isoformat()
+    assert midweek_slot_due(wed, sched, slot) is None              # already done
+    assert midweek_slot_due(datetime(2026, 11, 4, 17, 7, tzinfo=UK), sched, None) is None  # too early
+    assert midweek_slot_due(datetime(2026, 11, 6, 18, 7, tzinfo=UK), sched, None) is None  # Friday
+    assert midweek_slot_due(wed, {**sched, "midweek_days": []}, None) is None
+
+
+def test_current_list():
+    from screener.state import current_list
+
+    s = {"weeks": {"2026-10-26": ["A"], "2026-11-02": ["B", "C"]}}
+    assert current_list(s, date(2026, 11, 4)) == ("2026-11-02", ["B", "C"])   # Wednesday of that week
+    assert current_list(s, date(2026, 11, 12)) == ("2026-11-02", ["B", "C"])  # no list yet: latest
+    assert current_list({"weeks": {}}, date(2026, 11, 4)) == ("2026-11-02", [])

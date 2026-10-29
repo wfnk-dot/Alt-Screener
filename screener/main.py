@@ -26,7 +26,7 @@ from .filters import apply_filters
 from .metrics import Coin, beta_corr, compute_metrics, live_price_changes
 from .output import diff_lists, discord_message, post_discord, report_markdown, btc_summary, watchlist_text, week_of, week_title
 from .ranking import score_and_rank
-from .state import load_state, previous_list, record_week, save_state
+from .state import current_list, load_state, previous_list, record_week, save_state
 from .tags import tag_coin
 from .universe import base_from_symbol, excluded_names, is_excluded, match_hyperliquid
 
@@ -77,7 +77,8 @@ def build_universe(cfg, archive, live, hl, notes):
     return [(bases[b], b, hl_name) for b, hl_name in sorted(matched.items())]
 
 
-def run(cfg, today, dry_run=False, scheduled=False, root=ROOT, now_uk=None):
+def run(cfg, today, dry_run=False, scheduled=False, root=ROOT, now_uk=None, midweek=None):
+    """midweek: None for the weekly post; otherwise the mid-week slot being run ("" for a manual run)."""
     d = cfg["data"]
     http = Http(timeout=d["timeout_seconds"], pool=d["parallel_downloads"])
     archive = BinanceArchive(http, d["binance_archive_url"])
@@ -278,6 +279,8 @@ def run(cfg, today, dry_run=False, scheduled=False, root=ROOT, now_uk=None):
         live_price_changes(btc, hl_bars(btc_hl, "1d", 10), today)
     tag_coin(btc, cfg, {"4h": h4[(btc_symbol, btc_hl)], "1h": h1[(btc_symbol, btc_hl)]})
     btc_line = btc_summary(btc)
+    if midweek is not None:
+        return run_midweek(cfg, top, btc_line, today, dry_run, scheduled, root, now_uk, midweek)
 
     monday = week_of(today if now_uk is None else now_uk.date())
     week_key = monday.isoformat()
@@ -336,10 +339,67 @@ def run(cfg, today, dry_run=False, scheduled=False, root=ROOT, now_uk=None):
     return top, ranked
 
 
+def run_midweek(cfg, top, btc_line, today, dry_run, scheduled, root, now_uk, slot):
+    """Ping the watchlist channel about coins that have entered the top N since the current list."""
+    state_path = Path(root) / "state.json"
+    state = load_state(state_path)
+    week_key, current = current_list(state, today)
+    pinged = state["midweek_pinged"].get(week_key, [])
+    movers = [c for c in top if c.base not in current and c.base not in pinged]
+    if scheduled:
+        state["last_midweek_slot"] = slot
+    if not movers:
+        log.info("Mid-week check: no new coins in the top %d", cfg["top_n"])
+        if not dry_run:
+            save_state(state_path, state)
+        return top, movers
+    now_uk = now_uk or datetime.now(ZoneInfo(cfg["schedule"]["timezone"]))
+    names = ", ".join(c.base for c in movers)
+    ping = cfg["discord"].get("ping") or ""
+    text = (f"{ping}\n" if ping else "") + (
+        f"**Mid-week movers** · {names} {'has' if len(movers) == 1 else 'have'} joined the top {cfg['top_n']} since Sunday"
+    )
+    png = render_table(movers, cfg, title=f"Mid-week movers · {now_uk:%a %d %b}", btc_line=btc_line,
+                       subtitle=f"Joined the top {cfg['top_n']} since Sunday's list. Prices live at {now_uk:%H:%M} UK.")
+    # Updated TradingView file: this week's list plus the new coins in their own section
+    tv = cfg["tradingview"]
+    current_syms = [tv["alt_symbol_format"].format(symbol=c) for c in [_symbol_for(b, top) for b in current] if c]
+    parts = [f"###{tv['core_section']}", *tv["core"], f"###{tv['alts_section']}", *current_syms, "###NEW",
+             *[tv["alt_symbol_format"].format(symbol=c.symbol) for c in movers]]
+    wl = ",".join(parts) + "\n"
+    latest = Path(root) / "latest"
+    latest.mkdir(exist_ok=True)
+    (latest / "midweek.png").write_bytes(png)
+    if dry_run:
+        print("---- Mid-week post (dry run, not sent) ----")
+        print(text)
+        print(wl)
+        return top, movers
+    url = os.environ.get("DISCORD_WEBHOOK_URL")
+    if not url:
+        raise RuntimeError("DISCORD_WEBHOOK_URL secret is not set (see SETUP.md)")
+    post_discord(url, text, [("movers.png", png, "image/png"), ("watchlist.txt", wl.encode(), "text/plain")], ping=ping)
+    state["midweek_pinged"][week_key] = pinged + [c.base for c in movers]
+    for k in sorted(state["midweek_pinged"])[:-cfg["output"]["keep_weeks"]]:
+        del state["midweek_pinged"][k]
+    save_state(state_path, state)
+    return top, movers
+
+
+def _symbol_for(base, coins):
+    """Binance symbol for a saved coin name (USDT perps: base + USDT)."""
+    for c in coins:
+        if c.base == base:
+            return c.symbol
+    return f"{base}USDT"
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(description="Weekly alt perp watchlist")
     p.add_argument("--dry-run", action="store_true", help="print the Discord post instead of sending it")
     p.add_argument("--scheduled", action="store_true", help="mark this as the weekly scheduled run")
+    p.add_argument("--midweek", nargs="?", const="", default=None,
+                   help="mid-week movers check instead of the weekly post (optionally the schedule slot)")
     p.add_argument("--config", default=str(ROOT / "config.yml"))
     args = p.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -347,7 +407,7 @@ def main(argv=None):
     now_uk = datetime.now(ZoneInfo(cfg["schedule"]["timezone"]))
     today = datetime.now(timezone.utc).date()
     try:
-        run(cfg, today, dry_run=args.dry_run, scheduled=args.scheduled, now_uk=now_uk)
+        run(cfg, today, dry_run=args.dry_run, scheduled=args.scheduled, now_uk=now_uk, midweek=args.midweek)
     except Exception as e:
         log.exception("Screener failed")
         (ROOT / "run_error.txt").write_text(f"{type(e).__name__}: {e}"[:300], encoding="utf-8")

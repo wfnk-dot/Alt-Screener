@@ -12,6 +12,10 @@ on:
         description: "Dry run: build the list but don't post to Discord or save"
         type: boolean
         default: false
+      midweek:
+        description: "Mid-week movers check instead of the full weekly post"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -52,6 +56,8 @@ jobs:
           ARGS=""
           if [ "${{ github.event_name }}" = "schedule" ]; then ARGS="--scheduled"; fi
           if [ "${{ inputs.dry_run }}" = "true" ]; then ARGS="$ARGS --dry-run"; fi
+          if [ "${{ steps.gate.outputs.mode }}" = "midweek" ]; then ARGS="$ARGS --midweek ${{ steps.gate.outputs.slot }}"; fi
+          if [ "${{ inputs.midweek }}" = "true" ]; then ARGS="$ARGS --midweek"; fi
           python -m screener $ARGS
 
       - name: Save results to the repo
@@ -73,7 +79,14 @@ jobs:
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
         run: |
-          if [ "${{ github.event_name }}" = "schedule" ] && [ -n "${{ steps.gate.outputs.week }}" ]; then
+          if [ "${{ steps.gate.outputs.mode }}" = "midweek" ]; then
+            python3 -m screener.notify_failure --mark-midweek "${{ steps.gate.outputs.slot }}"
+            git config user.name "alt-screener bot"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git checkout -- latest history 2>/dev/null || true
+            git add state.json
+            git commit -m "Mid-week check failed" && git push || true
+          elif [ "${{ github.event_name }}" = "schedule" ] && [ -n "${{ steps.gate.outputs.week }}" ]; then
             python3 -m screener.notify_failure --mark-week "${{ steps.gate.outputs.week }}"
             git config user.name "alt-screener bot"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"

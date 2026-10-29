@@ -34,16 +34,33 @@ def should_run(now, sched, last_scheduled_week):
     return last_scheduled_week != week_of(slot.date()).isoformat()
 
 
+def midweek_slot_due(now, sched, last_midweek_slot):
+    """The mid-week slot to run now (ISO string), or None. Same 24-hour catch-up as the weekly post."""
+    for day in sched.get("midweek_days") or []:
+        slot = last_slot(now, day, sched.get("midweek_time", sched["time"]))
+        if now - slot < timedelta(hours=24) and slot.isoformat() != last_midweek_slot:
+            return slot.isoformat()
+    return None
+
+
 def main():
     cfg = load_config()
-    now = datetime.now(ZoneInfo(cfg["schedule"]["timezone"]))
-    run = should_run(now, cfg["schedule"], load_state(ROOT / "state.json")["last_scheduled_week"])
-    week = week_of(last_slot(now, cfg["schedule"]["day"], cfg["schedule"]["time"]).date()).isoformat()
-    print(f"UK time {now:%a %H:%M} -> run={'true' if run else 'false'}")
+    sched = cfg["schedule"]
+    now = datetime.now(ZoneInfo(sched["timezone"]))
+    state = load_state(ROOT / "state.json")
+    week = week_of(last_slot(now, sched["day"], sched["time"]).date()).isoformat()
+    mode, slot = "", ""
+    if should_run(now, sched, state["last_scheduled_week"]):
+        mode = "weekly"
+    else:
+        slot = midweek_slot_due(now, sched, state.get("last_midweek_slot")) or ""
+        mode = "midweek" if slot else ""
+    run = bool(mode)
+    print(f"UK time {now:%a %H:%M} -> run={'true' if run else 'false'} {mode}")
     out = os.environ.get("GITHUB_OUTPUT")
     if out:
         with open(out, "a") as f:
-            f.write(f"run={'true' if run else 'false'}\nweek={week}\n")
+            f.write(f"run={'true' if run else 'false'}\nmode={mode}\nweek={week}\nslot={slot}\n")
     return 0
 
 
