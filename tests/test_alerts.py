@@ -49,11 +49,11 @@ def test_bottom_dorito_mirror():
 
 
 def test_3day_blocks_match_binance():
-    # Real Binance 3d candles opened on 2026-07-01, 2024-01-01 and 2024-01-04
-    daily = [bar(i, 1, 1, start=date(2026, 6, 29)) for i in range(9)]
+    # TradingView 3D candles on Wyn's ENA chart opened 2026-03-29 and 2026-08-23
+    daily = [bar(i, 1, 1, start=date(2026, 3, 28)) for i in range(9)]
     blocks = to_3day(daily)
-    assert [b.day for b in blocks] == [date(2026, 7, 1), date(2026, 7, 4)]  # incomplete edges dropped
-    assert to_3day([bar(i, 1, 1, start=date(2024, 1, 1)) for i in range(3)])[0].day == date(2024, 1, 1)
+    assert [b.day for b in blocks] == [date(2026, 3, 29), date(2026, 4, 1)]  # incomplete edges dropped
+    assert to_3day([bar(i, 1, 1, start=date(2026, 8, 23)) for i in range(3)])[0].day == date(2026, 8, 23)
 
 
 def test_last_close_times():
@@ -61,7 +61,7 @@ def test_last_close_times():
     assert _last_close("4h", now) == datetime(2026, 10, 29, 12, tzinfo=timezone.utc)
     assert _last_close("1d", now) == datetime(2026, 10, 29, tzinfo=timezone.utc)
     assert _last_close("1w", now) == datetime(2026, 10, 26, tzinfo=timezone.utc)
-    assert _last_close("3d", now) == datetime(2026, 10, 29, tzinfo=timezone.utc)
+    assert _last_close("3d", now) == datetime(2026, 10, 28, tzinfo=timezone.utc)
 
 
 def test_only_closed_candles_and_no_repeats(cfg):

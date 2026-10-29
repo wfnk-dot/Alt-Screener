@@ -54,12 +54,13 @@ def leledc(bars, count=10, length=40):
 
 
 def to_3day(daily):
-    """3-day candles from daily ones, grouped like Binance's 3d candles (they start on days where
-    days-since-1-Jan-1970 leaves remainder 1 when divided by 3, e.g. 1 Jul 2026). Only complete blocks."""
+    """3-day candles from daily ones, grouped like TradingView's 3D chart: blocks start on days where
+    days-since-1-Jan-1970 divides by 3 (e.g. 29 Mar and 23 Aug 2026). Checked against Wyn's chart;
+    Binance's own 3d files start a day later. Only complete blocks are kept."""
     groups = {}
     for b in daily:
         days = b.day.toordinal() - date(1970, 1, 1).toordinal()
-        groups.setdefault((days - 1) // 3, []).append(b)
+        groups.setdefault(days // 3, []).append(b)
     out = []
     for k in sorted(groups):
         g = groups[k]
@@ -217,7 +218,7 @@ def _last_close(tf, now):
         return midnight
     if tf == "3d":
         days = (midnight.date() - date(1970, 1, 1)).days
-        return midnight - timedelta(days=(days - 1) % 3)
+        return midnight - timedelta(days=days % 3)
     return midnight - timedelta(days=midnight.weekday())  # weekly: Monday 00:00 UTC
 
 
