@@ -82,7 +82,6 @@ def run(cfg, today, dry_run=False, scheduled=False, root=ROOT, now_uk=None):
     http = Http(timeout=d["timeout_seconds"], pool=d["parallel_downloads"])
     archive = BinanceArchive(http, d["binance_archive_url"])
     live = BinanceLive(http, d["binance_api_url"])
-    workers = d["parallel_downloads"]
     notes = []
 
     log.info("Hyperliquid: fetching coins")
@@ -117,14 +116,26 @@ def run(cfg, today, dry_run=False, scheduled=False, root=ROOT, now_uk=None):
     bn_throttle = Throttle(d["binance_seconds_between_calls"])
     now_utc = datetime.now(timezone.utc)
 
+    # After a few live Binance failures in a row, stop trying it for the rest of the run
+    bn_failures = []
+
+    def binance_ok():
+        return len(bn_failures) < 3
+
+    def binance_failed(what, e):
+        bn_failures.append(what)
+        log.warning("Binance live %s failed, using the backup: %s", what, e)
+
     def daily_candles(sym):
         """Live Binance candles (the last one still forming); the archive if Binance doesn't answer."""
-        try:
-            bars = binance_web_klines(http, bn, sym, "1d", pages=1, throttle=bn_throttle)
-            if bars:
-                return bars, "Binance live"
-        except Exception as e:  # noqa: BLE001
-            log.warning("Binance live candles failed for %s, using the archive: %s", sym, e)
+        if binance_ok():
+            try:
+                bars = binance_web_klines(http, bn, sym, "1d", pages=1, throttle=bn_throttle)
+                if bars:
+                    bn_failures.clear()
+                    return bars, "Binance live"
+            except Exception as e:  # noqa: BLE001
+                binance_failed(f"candles for {sym}", e)
         return archive.klines(sym, today, d["history_months"]), "Binance archive"
 
     klines = parallel_map(daily_candles, [c.symbol for c in candidates] + [btc_symbol], 4)
@@ -162,7 +173,7 @@ def run(cfg, today, dry_run=False, scheduled=False, root=ROOT, now_uk=None):
     def open_interest(sym):
         """(now, {days: earlier}): live Binance hourly snapshots, else the archive's daily ones."""
         try:
-            hist = binance_oi_history(http, bn, sym, "1h", 200, bn_throttle)
+            hist = binance_oi_history(http, bn, sym, "1h", 200, bn_throttle) if binance_ok() else None
             if hist:
                 t_now, c_now, v_now = hist[-1]
                 before = {}
@@ -172,7 +183,7 @@ def run(cfg, today, dry_run=False, scheduled=False, root=ROOT, now_uk=None):
                     before[days] = OIPoint(t, c_, v) if abs(t - target) <= timedelta(hours=3) else None
                 return OIPoint(t_now, c_now, v_now), before
         except Exception as e:  # noqa: BLE001
-            log.warning("Binance live OI failed for %s, using the archive: %s", sym, e)
+            binance_failed(f"OI for {sym}", e)
         return archive.open_interest(sym, today - timedelta(days=1), [short, ch])
 
     oi = parallel_map(open_interest, [c.symbol for c in live_coins], 4)
@@ -242,13 +253,13 @@ def run(cfg, today, dry_run=False, scheduled=False, root=ROOT, now_uk=None):
         symbol, hl_name = pair
         step = timedelta(hours=4 if interval == "4h" else 1)
         try:
-            bars = binance_web_klines(http, bn, symbol, interval, pages=1, throttle=bn_throttle)
+            bars = binance_web_klines(http, bn, symbol, interval, pages=1, throttle=bn_throttle) if binance_ok() else []
             bars = [b for b in bars if b.day + step <= now_utc][-ind["intraday_candles"]:]
             if bars:
                 intraday_source.add("Binance")
                 return bars
         except Exception as e:  # noqa: BLE001
-            log.warning("Binance %s candles failed for %s, using Hyperliquid: %s", interval, symbol, e)
+            binance_failed(f"{interval} candles for {symbol}", e)
         intraday_source.add("Hyperliquid")
         return hl_bars(hl_name, interval, ind["intraday_candles"] * (4 if interval == "4h" else 1) // 24 + 1)
 

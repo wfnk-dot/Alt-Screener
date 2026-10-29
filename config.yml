@@ -204,7 +204,7 @@ alerts:
   leledc_bar_count: 10
   leledc_swing_length: 40
   # Who to ping: "@here", "@everyone", or "" for none
-  ping: ""
+  ping: "@here"
   # Candles: Binance's live futures data (same as your TradingView chart). Hyperliquid is the backup.
   binance_web_url: https://www.binance.com
   # Pause between Binance requests (stays well under Binance's per-minute limit)

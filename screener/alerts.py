@@ -176,14 +176,19 @@ def run(cfg, dry_run=False, now=None):
     now_ms = int(now.timestamp() * 1000)
     sources = {}
 
+    bn_failures = []  # after 3 failures in a row, skip Binance for the rest of the run
+
     def fetch(coin, interval, days):
         base, name, symbol = coin
         try:
-            bars = binance_web_klines(http, a["binance_web_url"], symbol, interval, pages=2, throttle=bn_throttle)
-            if bars:
-                sources[base] = "Binance"
-                return bars
+            if len(bn_failures) < 3:
+                bars = binance_web_klines(http, a["binance_web_url"], symbol, interval, pages=2, throttle=bn_throttle)
+                if bars:
+                    bn_failures.clear()
+                    sources[base] = "Binance"
+                    return bars
         except Exception as e:  # noqa: BLE001
+            bn_failures.append(symbol)
             log.warning("Binance %s candles failed for %s, using Hyperliquid: %s", interval, symbol, e)
         try:
             sources[base] = "Hyperliquid"
