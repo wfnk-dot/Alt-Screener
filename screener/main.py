@@ -25,7 +25,6 @@ from .image import render_table
 from .filters import apply_filters
 from .metrics import Coin, beta_corr, compute_metrics, live_price_changes
 from .output import diff_lists, discord_message, post_discord, report_markdown, btc_summary, watchlist_text, week_of, week_title
-from .notes import coin_note, notes_messages
 from .ranking import score_and_rank
 from .state import load_state, previous_list, record_week, save_state
 from .tags import tag_coin
@@ -311,8 +310,6 @@ def run(cfg, today, dry_run=False, scheduled=False, root=ROOT, now_uk=None):
         "Passed all filters": len(passed),
     }
     report = report_markdown(ranked, cfg["top_n"], monday, run_info, rejected, notes)
-    report += "\n## Coin notes\n\n" + "\n".join(f"- **{c.base}**: {coin_note(c, cfg)}" for c in top) + "\n"
-    note_msgs = notes_messages(top, cfg)
 
     latest = Path(root) / "latest"
     history = Path(root) / "history"
@@ -326,8 +323,6 @@ def run(cfg, today, dry_run=False, scheduled=False, root=ROOT, now_uk=None):
     if dry_run:
         print("---- Discord post (dry run, not sent) ----")
         print(msg)
-        print("---- notes (dry run) ----")
-        print("\n".join(note_msgs))
         print("---- watchlist.txt ----")
         print(wl)
     else:
@@ -336,8 +331,6 @@ def run(cfg, today, dry_run=False, scheduled=False, root=ROOT, now_uk=None):
             raise RuntimeError("DISCORD_WEBHOOK_URL secret is not set (see SETUP.md)")
         post_discord(url, msg, [("table.png", png, "image/png"), ("watchlist.txt", wl.encode(), "text/plain")],
                      ping=cfg["discord"]["ping"])
-        for m in note_msgs:
-            post_discord(url, m)
         record_week(state, week_key, [c.base for c in top], cfg["output"]["keep_weeks"], scheduled)
         save_state(state_path, state)
     return top, ranked
