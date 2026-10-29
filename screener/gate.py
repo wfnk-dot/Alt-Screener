@@ -38,11 +38,12 @@ def main():
     cfg = load_config()
     now = datetime.now(ZoneInfo(cfg["schedule"]["timezone"]))
     run = should_run(now, cfg["schedule"], load_state(ROOT / "state.json")["last_scheduled_week"])
+    week = week_of(last_slot(now, cfg["schedule"]["day"], cfg["schedule"]["time"]).date()).isoformat()
     print(f"UK time {now:%a %H:%M} -> run={'true' if run else 'false'}")
     out = os.environ.get("GITHUB_OUTPUT")
     if out:
         with open(out, "a") as f:
-            f.write(f"run={'true' if run else 'false'}\n")
+            f.write(f"run={'true' if run else 'false'}\nweek={week}\n")
     return 0
 
 

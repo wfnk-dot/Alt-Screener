@@ -1,0 +1,85 @@
+name: Alt Screener
+
+on:
+  # GitHub's timer only understands UTC and is often late, so this wakes every
+  # hour and the "Check the clock" step compares UK time with config.yml.
+  schedule:
+    - cron: "7 * * * *"
+  # The "Run workflow" button on the Actions tab
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Dry run: build the list but don't post to Discord or save"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: alt-screener
+  cancel-in-progress: false
+
+jobs:
+  screen:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install
+        run: pip install -r requirements.txt
+
+      - name: Check the clock
+        id: gate
+        run: |
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            python -m screener.gate
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run screener
+        if: steps.gate.outputs.run == 'true'
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: |
+          ARGS=""
+          if [ "${{ github.event_name }}" = "schedule" ]; then ARGS="--scheduled"; fi
+          if [ "${{ inputs.dry_run }}" = "true" ]; then ARGS="$ARGS --dry-run"; fi
+          python -m screener $ARGS
+
+      - name: Save results to the repo
+        if: steps.gate.outputs.run == 'true' && inputs.dry_run != true
+        run: |
+          git config user.name "alt-screener bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add latest history state.json
+          if git diff --cached --quiet; then echo "Nothing to save"; exit 0; fi
+          git commit -m "Weekly watchlist $(date -u +%Y-%m-%d)"
+          for i in 1 2 3; do
+            git pull --rebase origin "${GITHUB_REF_NAME}" && git push && exit 0
+            sleep 5
+          done
+          exit 1
+
+      - name: Tell Discord it failed
+        if: failure()
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: |
+          if [ "${{ github.event_name }}" = "schedule" ] && [ -n "${{ steps.gate.outputs.week }}" ]; then
+            python3 -m screener.notify_failure --mark-week "${{ steps.gate.outputs.week }}"
+            git config user.name "alt-screener bot"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git checkout -- latest history 2>/dev/null || true
+            git add state.json
+            git commit -m "Scheduled run failed for week of ${{ steps.gate.outputs.week }}" && git push || true
+          else
+            python3 -m screener.notify_failure
+          fi
