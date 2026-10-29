@@ -365,6 +365,21 @@ def binance_web_klines(http, base_url, symbol, interval, pages=2, throttle=None)
     return bars
 
 
+def binance_oi_history(http, base_url, symbol, period="1h", limit=200, throttle=None):
+    """Binance open interest snapshots, oldest first: [(UTC time, contracts, USD value)]."""
+    if throttle:
+        throttle.wait()
+    rows = http.request(
+        "GET", base_url.rstrip("/") + "/futures/data/openInterestHist",
+        params={"symbol": symbol, "period": period, "limit": limit},
+    ).json()
+    out = []
+    for r in rows:
+        when = datetime.fromtimestamp(int(r["timestamp"]) / 1000, tz=timezone.utc)
+        out.append((when, float(r["sumOpenInterest"]), float(r["sumOpenInterestValue"])))
+    return sorted(out)
+
+
 # ---------------------------------------------------------------- Bybit (kline fallback)
 
 

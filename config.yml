@@ -233,8 +233,11 @@ tradingview:
 data:
   # Binance public data archive
   binance_archive_url: https://data.binance.vision
-  # Binance live API (blocked from US servers such as GitHub's; used only if it answers)
-  binance_api_url: https://fapi.binance.com
+  # Binance live data. www.binance.com answers from GitHub's US servers (fapi.binance.com doesn't).
+  # If it ever stops working, the archive and Hyperliquid are used instead automatically.
+  binance_api_url: https://www.binance.com
+  # Pause between Binance requests (stays well under Binance's per-minute limit)
+  binance_seconds_between_calls: 0.25
   # Hyperliquid public API
   hyperliquid_url: https://api.hyperliquid.xyz/info
   # Bybit public API (backup for Binance candles)

@@ -53,9 +53,9 @@ def compute_metrics(coin, cfg):
     return coin
 
 
-def live_price_changes(coin, hl_bars, today):
-    """Price moves from Hyperliquid's daily candles, which run up to now (the Binance archive lags
-    1-2 days, so it never has the weekend on a Sunday). Sets the 7-day and weekend moves."""
+def live_price_changes(coin, hl_bars, today, source="Hyperliquid (live)"):
+    """Price moves from live daily candles (Binance's or Hyperliquid's): the last one is today's, still
+    forming, so they run up to now and include the weekend. Sets the 7-day and weekend moves."""
     by_day = {b.day: b for b in hl_bars}
     if not hl_bars or hl_bars[-1].day != today:
         return coin
@@ -63,7 +63,7 @@ def live_price_changes(coin, hl_bars, today):
     week_ago = by_day.get(today - timedelta(days=7))
     if week_ago and week_ago.close:
         coin.return_7d_pct = (now / week_ago.close - 1) * 100
-        coin.price_source = "Hyperliquid (live)"
+        coin.price_source = source
     saturday = today - timedelta(days=(today.weekday() - 5) % 7)
     sat, sun = by_day.get(saturday), by_day.get(saturday + timedelta(days=1))
     if sat and sat.open:

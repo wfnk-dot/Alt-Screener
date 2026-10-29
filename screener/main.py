@@ -12,6 +12,9 @@ from .data import (
     BinanceArchive,
     BinanceLive,
     Http,
+    OIPoint,
+    binance_oi_history,
+    binance_web_klines,
     bybit_klines,
     Throttle,
     hyperliquid_candles,
@@ -55,13 +58,13 @@ def has_gaps(bars, recent_days=60):
 
 def build_universe(cfg, archive, live, hl, notes):
     quote = cfg["universe"]["quote_asset"]
-    symbols = archive.list_perp_symbols()
     info = live.exchange_info()
     if info:
-        allowed = allowed_from_exchange_info(info, quote)
-        symbols = [s for s in symbols if s in allowed] + sorted(allowed - set(symbols))
+        # Live list: only trading perps, not index/tradfi, not scheduled for delisting
+        symbols = sorted(allowed_from_exchange_info(info, quote))
     else:
-        notes.append("Binance live API not reachable (normal from GitHub's US servers): "
+        symbols = archive.list_perp_symbols()
+        notes.append("Binance live API not reachable: coin list from the archive, "
                      "delisted contracts detected by missing recent candles instead.")
     excluded = excluded_names(cfg)
     bases = {}
@@ -110,18 +113,32 @@ def run(cfg, today, dry_run=False, scheduled=False, root=ROOT, now_uk=None):
     log.info("Downloading candles for %d coins", len(candidates))
 
     btc_symbol = cfg["btc"]["binance_symbol"]
-    klines = parallel_map(
-        lambda s: archive.klines(s, today, d["history_months"]), [c.symbol for c in candidates] + [btc_symbol], workers
-    )
-    btc_bars = [b for b in klines[btc_symbol] if b.day < today]
+    bn = d["binance_api_url"]
+    bn_throttle = Throttle(d["binance_seconds_between_calls"])
+    now_utc = datetime.now(timezone.utc)
+
+    def daily_candles(sym):
+        """Live Binance candles (the last one still forming); the archive if Binance doesn't answer."""
+        try:
+            bars = binance_web_klines(http, bn, sym, "1d", pages=1, throttle=bn_throttle)
+            if bars:
+                return bars, "Binance live"
+        except Exception as e:  # noqa: BLE001
+            log.warning("Binance live candles failed for %s, using the archive: %s", sym, e)
+        return archive.klines(sym, today, d["history_months"]), "Binance archive"
+
+    klines = parallel_map(daily_candles, [c.symbol for c in candidates] + [btc_symbol], 4)
+    live_daily = {sym: bars for sym, (bars, src) in klines.items() if src == "Binance live"}
+    btc_bars = [b for b in klines[btc_symbol][0] if b.day < today]
     for c in candidates:
-        c.bars = [b for b in klines[c.symbol] if b.day < today]
+        bars, c.source = klines[c.symbol]
+        c.bars = [b for b in bars if b.day < today]
     newest = max((c.bars[-1].day for c in candidates if c.bars), default=today - timedelta(days=1))
 
     # Bybit fallback when the archive is behind or has holes for a coin
     bybit_used = []
     for c in candidates:
-        if c.bars and c.bars[-1].day >= newest and not has_gaps(c.bars):
+        if c.source == "Binance live" or (c.bars and c.bars[-1].day >= newest and not has_gaps(c.bars)):
             continue
         try:
             bars = [b for b in bybit_klines(http, d["bybit_url"], c.symbol) if b.day < today]
@@ -141,15 +158,30 @@ def run(cfg, today, dry_run=False, scheduled=False, root=ROOT, now_uk=None):
     log.info("Downloading open interest for %d coins", len(live_coins))
     ch = cfg["indicators"]["change_days"]
     short = cfg["indicators"]["oi_short_change_days"]
-    oi = parallel_map(
-        lambda s: archive.open_interest(s, today - timedelta(days=1), [short, ch]), [c.symbol for c in live_coins], workers
-    )
-    oi_day = None
+
+    def open_interest(sym):
+        """(now, {days: earlier}): live Binance hourly snapshots, else the archive's daily ones."""
+        try:
+            hist = binance_oi_history(http, bn, sym, "1h", 200, bn_throttle)
+            if hist:
+                t_now, c_now, v_now = hist[-1]
+                before = {}
+                for days in (short, ch):
+                    target = t_now - timedelta(days=days)
+                    t, c_, v = min(hist, key=lambda h: abs(h[0] - target))
+                    before[days] = OIPoint(t, c_, v) if abs(t - target) <= timedelta(hours=3) else None
+                return OIPoint(t_now, c_now, v_now), before
+        except Exception as e:  # noqa: BLE001
+            log.warning("Binance live OI failed for %s, using the archive: %s", sym, e)
+        return archive.open_interest(sym, today - timedelta(days=1), [short, ch])
+
+    oi = parallel_map(open_interest, [c.symbol for c in live_coins], 4)
+    oi_when = None  # newest reading: a datetime (live) or a date (archive)
     for c in live_coins:
         now, before = oi[c.symbol]
         if now:
             c.oi_usd = now.value_usd
-            oi_day = max(oi_day or now.day, now.day)
+            oi_when = now.day if oi_when is None else oi_when
             if before.get(ch) and before[ch].contracts:
                 c.oi_change_pct = (now.contracts / before[ch].contracts - 1) * 100
             if before.get(short) and before[short].contracts:
@@ -178,24 +210,24 @@ def run(cfg, today, dry_run=False, scheduled=False, root=ROOT, now_uk=None):
     if not passed:
         raise RuntimeError("no coins passed the filters (data problem?)")
 
-    # Live prices from Hyperliquid (the archive lags, so this is what includes the weekend).
-    # Spaced out to stay under Hyperliquid's request limit.
-    throttle = Throttle(d["hyperliquid_seconds_between_calls"])
-    now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+    # Live prices: Binance's forming daily candle (so the weekend is included); Hyperliquid if missing
+    hl_throttle = Throttle(d["hyperliquid_seconds_between_calls"])
+    now_ms = int(now_utc.timestamp() * 1000)
 
     def hl_bars(name, interval, days):
         start = now_ms - days * 86_400_000
         try:
-            return hyperliquid_candles(http, d["hyperliquid_url"], name, start, now_ms, interval, throttle)
+            return hyperliquid_candles(http, d["hyperliquid_url"], name, start, now_ms, interval, hl_throttle)
         except Exception as e:  # noqa: BLE001
             log.warning("Hyperliquid %s candles failed for %s: %s", interval, name, e)
             return []
 
     btc_hl = cfg["btc"]["hyperliquid_coin"]
-    log.info("Fetching live Hyperliquid prices for %d coins", len(passed) + 1)
-    daily_hl = parallel_map(lambda n: hl_bars(n, "1d", 10), [c.hl_name for c in passed] + [btc_hl], 4)
     for c in passed:
-        live_price_changes(c, daily_hl[c.hl_name], today)
+        if c.symbol in live_daily:
+            live_price_changes(c, live_daily[c.symbol], today, "Binance (live)")
+        else:
+            live_price_changes(c, hl_bars(c.hl_name, "1d", 10), today)
 
     ranked = score_and_rank(passed, cfg["ranking_weights"])
     top = ranked[: cfg["top_n"]]
@@ -203,16 +235,37 @@ def run(cfg, today, dry_run=False, scheduled=False, root=ROOT, now_uk=None):
     # 4h and 1h trends: only for the coins on the list (and BTC), to keep requests down
     ind = cfg["indicators"]
     btc = Coin(btc_symbol, "BTC", btc_hl, btc_bars)
-    names = [c.hl_name for c in top] + [btc_hl]
-    h4 = parallel_map(lambda n: hl_bars(n, "4h", ind["intraday_candles"] * 4 // 24 + 1), names, 4)
-    h1 = parallel_map(lambda n: hl_bars(n, "1h", ind["intraday_candles"] // 24 + 1), names, 4)
+    intraday_source = set()
+
+    def intraday(pair, interval):
+        """Closed 4h/1h candles: live Binance, else Hyperliquid."""
+        symbol, hl_name = pair
+        step = timedelta(hours=4 if interval == "4h" else 1)
+        try:
+            bars = binance_web_klines(http, bn, symbol, interval, pages=1, throttle=bn_throttle)
+            bars = [b for b in bars if b.day + step <= now_utc][-ind["intraday_candles"]:]
+            if bars:
+                intraday_source.add("Binance")
+                return bars
+        except Exception as e:  # noqa: BLE001
+            log.warning("Binance %s candles failed for %s, using Hyperliquid: %s", interval, symbol, e)
+        intraday_source.add("Hyperliquid")
+        return hl_bars(hl_name, interval, ind["intraday_candles"] * (4 if interval == "4h" else 1) // 24 + 1)
+
+    pairs = [(c.symbol, c.hl_name) for c in top] + [(btc_symbol, btc_hl)]
+    h4 = parallel_map(lambda p: intraday(p, "4h"), pairs, 4)
+    h1 = parallel_map(lambda p: intraday(p, "1h"), pairs, 4)
     for c in ranked:
-        tag_coin(c, cfg, {"4h": h4.get(c.hl_name), "1h": h1.get(c.hl_name)})
+        key = (c.symbol, c.hl_name)
+        tag_coin(c, cfg, {"4h": h4.get(key), "1h": h1.get(key)})
 
     # BTC's own trend, shown at the top of the post
     compute_metrics(btc, cfg)
-    live_price_changes(btc, daily_hl[btc_hl], today)
-    tag_coin(btc, cfg, {"4h": h4[btc_hl], "1h": h1[btc_hl]})
+    if btc_symbol in live_daily:
+        live_price_changes(btc, live_daily[btc_symbol], today, "Binance (live)")
+    else:
+        live_price_changes(btc, hl_bars(btc_hl, "1d", 10), today)
+    tag_coin(btc, cfg, {"4h": h4[(btc_symbol, btc_hl)], "1h": h1[(btc_symbol, btc_hl)]})
     btc_line = btc_summary(btc)
 
     monday = week_of(today if now_uk is None else now_uk.date())
@@ -224,10 +277,20 @@ def run(cfg, today, dry_run=False, scheduled=False, root=ROOT, now_uk=None):
     now_uk = now_uk or datetime.now(ZoneInfo(cfg["schedule"]["timezone"]))
     wl = watchlist_text(top, cfg)
     msg = discord_message(top, new, dropped, monday, cfg, btc_line=btc_line, notes=[n for n in notes if n.startswith("Candles from Bybit")])
-    live = any(c.price_source.startswith("Hyperliquid") for c in top)
-    prices = f"Prices: Hyperliquid, live at {now_uk:%a %d %b %H:%M} UK." if live else f"Prices: Binance daily candles to {newest:%a %d %b}."
-    oi_text = f"OI: Binance, to end of {oi_day:%a %d %b}." if oi_day else ""
-    footer = f"{prices}  {oi_text}  ATR, weekly/daily trend: Binance candles to {newest:%a %d %b}. 4h/1h trend: Hyperliquid, live."
+    price_src = sorted({c.price_source for c in top})
+    if any("live" in p for p in price_src):
+        prices = f"Prices: {' / '.join(price_src)} at {now_uk:%a %d %b %H:%M} UK."
+    else:
+        prices = f"Prices: Binance daily candles to {newest:%a %d %b}."
+    if isinstance(oi_when, datetime):
+        oi_text = f"OI: Binance, {oi_when.astimezone(now_uk.tzinfo):%a %d %b %H:%M} UK."
+    elif oi_when:
+        oi_text = f"OI: Binance archive, to end of {oi_when:%a %d %b}."
+    else:
+        oi_text = ""
+    candles = "live Binance" if live_daily else f"Binance archive to {newest:%a %d %b}"
+    footer = (f"{prices}  {oi_text}  ATR, weekly/daily trend: {candles} (closed candles).  "
+              f"4h/1h trend: {' / '.join(sorted(intraday_source)) or 'n/a'}, live.")
     png = render_table(top, cfg, title=week_title(monday), subtitle=footer, btc_line=btc_line)
     run_info = {
         "Generated (UK time)": now_uk.strftime("%a %d %b %Y %H:%M"),
