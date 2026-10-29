@@ -1,0 +1,62 @@
+name: Catalysts
+
+on:
+  # Every hour: week-ahead post on Sunday, and reminders before each event.
+  schedule:
+    - cron: "1 * * * *"
+  workflow_dispatch:
+    inputs:
+      outlook:
+        description: "Post the week-ahead outlook now"
+        type: boolean
+        default: true
+      dry_run:
+        description: "Dry run: show in the log only, don't post or save"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: catalysts
+  cancel-in-progress: false
+
+jobs:
+  catalysts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install
+        run: pip install -r requirements.txt
+
+      - name: Week ahead and reminders
+        env:
+          DISCORD_NEWS_WEBHOOK_URL: ${{ secrets.DISCORD_NEWS_WEBHOOK_URL }}
+        run: |
+          ARGS=""
+          if [ "${{ github.event_name }}" = "schedule" ]; then ARGS="--scheduled"; fi
+          if [ "${{ inputs.outlook }}" = "true" ]; then ARGS="$ARGS --outlook"; fi
+          if [ "${{ inputs.dry_run }}" = "true" ]; then ARGS="$ARGS --dry-run"; fi
+          python -m screener.events $ARGS
+
+      - name: Save what was sent
+        if: always() && inputs.dry_run != true
+        run: |
+          git config user.name "alt-screener bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add events_state.json events_history.json 2>/dev/null || true
+          if git diff --cached --quiet; then echo "Nothing to save"; exit 0; fi
+          git commit -m "Catalysts state $(date -u +%Y-%m-%dT%H:%MZ)"
+          for i in 1 2 3; do
+            git pull --rebase origin "${GITHUB_REF_NAME}" && git push && exit 0
+            sleep 5
+          done
+          exit 1

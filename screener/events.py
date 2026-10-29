@@ -1,0 +1,404 @@
+"""Catalysts channel: the week ahead (high-impact USD news + mega-cap earnings), how BTC reacted to the
+same events before, and reminders 1 day, 1 hour and 15 minutes before each one.
+
+Sources (all free, no key, reachable from GitHub): the Forex Factory calendar feed, the Federal
+Reserve's FOMC calendar page (for past meeting dates), Nasdaq's earnings calendar, and Binance BTC
+daily candles (Hyperliquid as backup) for the reactions.
+"""
+import argparse
+import json
+import logging
+import os
+import re
+import sys
+import time
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
+
+from .config import ROOT, load_config
+from .data import Http, binance_web_klines, hyperliquid_candles
+from .gate import last_slot
+from .image import AMBER, GREEN, MUTED, RED, TEXT, render_card
+from .output import post_discord, week_label, week_of
+
+log = logging.getLogger("events")
+STATE = ROOT / "events_state.json"
+HISTORY = ROOT / "events_history.json"
+ET = ZoneInfo("America/New_York")
+BROWSER = {
+    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) "
+                  "Chrome/124.0 Safari/537.36",
+    "Accept": "application/json, text/html",
+}
+MONTHS = {m: i for i, m in enumerate(["january", "february", "march", "april", "may", "june", "july", "august",
+                                      "september", "october", "november", "december"], 1)}
+
+
+# ---------------------------------------------------------------- sources
+
+
+def ff_events(http, url, countries, impacts):
+    """This week's calendar from Forex Factory's feed: [{title, when (UTC), forecast, previous, country}]."""
+    rows = http.request("GET", url, headers=BROWSER).json()
+    out = []
+    for r in rows:
+        if r.get("country") not in countries or r.get("impact") not in impacts:
+            continue
+        try:
+            when = datetime.fromisoformat(r["date"]).astimezone(timezone.utc)
+        except (KeyError, ValueError):
+            continue
+        out.append({"title": r["title"], "when": when, "forecast": r.get("forecast") or "",
+                    "previous": r.get("previous") or "", "country": r["country"]})
+    return out
+
+
+def fomc_decisions(html):
+    """FOMC rate-decision times (UTC) from the Fed's calendar page: 2pm New York on the meeting's last day."""
+    out = []
+    for block in re.split(r"<h4><a id=\"\d+\">", html)[1:]:
+        year = re.match(r"(\d{4}) FOMC Meetings", block)
+        if not year:
+            continue
+        y = int(year.group(1))
+        for month, days in re.findall(
+                r"fomc-meeting__month[^>]*><strong>([^<]+)</strong>.*?fomc-meeting__date[^>]*>([^<]+)<", block, re.S):
+            if "notation" in days.lower() or "unscheduled" in days.lower():
+                continue
+            nums = re.findall(r"\d+", days)
+            if not nums:
+                continue
+            last_month = month.split("/")[-1].strip().lower()
+            if last_month[:3] not in {m[:3] for m in MONTHS}:
+                continue
+            mnum = next(v for k, v in MONTHS.items() if k.startswith(last_month[:3]))
+            try:
+                local = datetime(y, mnum, int(nums[-1]), 14, 0, tzinfo=ET)
+            except ValueError:
+                continue
+            out.append(local.astimezone(timezone.utc))
+    return sorted(set(out))
+
+
+def mega_earnings(http, url, day, min_cap, extra):
+    """Earnings on `day` for companies worth at least `min_cap` dollars (or listed in `extra`)."""
+    r = http.request("GET", url, params={"date": day.isoformat()}, headers=BROWSER).json()
+    rows = ((r or {}).get("data") or {}).get("rows") or []
+    out = []
+    for row in rows:
+        try:
+            cap = float(str(row.get("marketCap", "")).replace("$", "").replace(",", "") or 0)
+        except ValueError:
+            cap = 0
+        if cap < min_cap and row.get("symbol") not in extra:
+            continue
+        slot = row.get("time", "")
+        if "pre" in slot:
+            when, label = datetime(day.year, day.month, day.day, 8, 0, tzinfo=ET), "before the open"
+        elif "after" in slot:
+            when, label = datetime(day.year, day.month, day.day, 16, 5, tzinfo=ET), "after the close"
+        else:
+            when, label = None, "time not set"
+        out.append({"title": f"{row['symbol']} earnings", "company": row.get("name", ""), "symbol": row["symbol"],
+                    "cap": cap, "when": when.astimezone(timezone.utc) if when else None, "day": day,
+                    "slot": label, "forecast": row.get("epsForecast", ""), "previous": row.get("lastYearEPS", "")})
+    return out
+
+
+def btc_daily(http, cfg):
+    """BTC daily closes {UTC date: close}: Binance, else Hyperliquid."""
+    try:
+        bars = binance_web_klines(http, cfg["alerts"]["binance_web_url"], cfg["btc"]["binance_symbol"], "1d", pages=2)
+        if bars:
+            return {b.day: b.close for b in bars}
+    except Exception as e:  # noqa: BLE001
+        log.warning("Binance BTC candles failed, using Hyperliquid: %s", e)
+    now_ms = int(time.time() * 1000)
+    bars = hyperliquid_candles(http, cfg["data"]["hyperliquid_url"], cfg["btc"]["hyperliquid_coin"],
+                               now_ms - 3000 * 86_400_000, now_ms, "1d")
+    return {b.day: b.close for b in bars}
+
+
+# ---------------------------------------------------------------- grouping and history
+
+
+def group_of(title, groups):
+    for name, titles in groups.items():
+        if title in titles:
+            return name
+    return None
+
+
+def merge_events(events, groups):
+    """One row per group per time slot (e.g. Fed Funds Rate + FOMC Statement = 'FOMC')."""
+    merged = {}
+    for e in events:
+        g = group_of(e["title"], groups)
+        key = (g or e["title"], e["when"].date() if g else e["when"])
+        if key not in merged:
+            merged[key] = {**e, "name": g or e["title"], "group": g, "titles": [e["title"]], "kind": "macro"}
+        else:
+            m = merged[key]
+            m["titles"].append(e["title"])
+            if e["when"] < m["when"]:
+                m["when"], m["forecast"], m["previous"] = e["when"], e["forecast"], e["previous"]
+    return sorted(merged.values(), key=lambda e: e["when"])
+
+
+def update_history(history, events, fomc, now, groups):
+    """Remember when each tracked event happened, so its BTC reaction can be shown next time."""
+    for e in events:
+        g = group_of(e["title"], groups)
+        if g and e["when"] <= now:
+            history.setdefault(g, [])
+            iso = e["when"].isoformat()
+            if all(datetime.fromisoformat(x).date() != e["when"].date() for x in history[g]):
+                history[g].append(iso)
+    if fomc:
+        history["FOMC"] = sorted({*history.get("FOMC", []), *(t.isoformat() for t in fomc if t <= now)})
+    for g in history:
+        history[g] = sorted(history[g])
+    return history
+
+
+def reaction(closes, when):
+    """BTC % move: on the day, 3 days and 7 days later, each vs the close the day before. None if not yet."""
+    d = when.date()
+    base = closes.get(d - timedelta(days=1))
+    if not base:
+        return None, None, None
+    pct = [None if closes.get(d + timedelta(days=k)) is None else (closes[d + timedelta(days=k)] / base - 1) * 100
+           for k in (0, 3, 7)]
+    return tuple(pct)
+
+
+# ---------------------------------------------------------------- pictures and text
+
+
+def _pct(v):
+    if v is None:
+        return ("n/a", MUTED)
+    return (f"{v:+.1f}%", GREEN if v > 0 else RED if v < 0 else TEXT)
+
+
+def outlook_cards(macro, earnings, history, closes, cfg, tz, monday):
+    ev = cfg["events"]
+    rows = []
+    items = [(e["when"], e) for e in macro] + [(e["when"] or datetime.combine(e["day"], datetime.min.time(), timezone.utc), e)
+                                               for e in earnings]
+    for when, e in sorted(items, key=lambda x: x[0]):
+        local = when.astimezone(tz)
+        macro_row = "group" in e
+        last = None
+        if macro_row and e["group"] in history:
+            past = [datetime.fromisoformat(x) for x in history[e["group"]] if datetime.fromisoformat(x) < when]
+            if past:
+                last = reaction(closes, past[-1])[0]
+        rows.append([
+            (f"{local:%a} {local.day} {local:%b}", TEXT),
+            (f"{local:%H:%M}" if (macro_row or e["when"]) else "TBC", TEXT),
+            (e["name"] if macro_row else f"{e['symbol']} · {e['slot']}", TEXT),
+            ("pill", "Macro", RED) if macro_row else ("pill", "Earnings", AMBER),
+            (e["forecast"] or "–", TEXT),
+            (e["previous"] or "–", MUTED),
+            _pct(last) if macro_row else ("", MUTED),
+        ])
+    cols = [("Day", "", "left", True), ("Time", "UK", "left", False), ("Event", "", "left", True),
+            ("Type", "", "center", False), ("Forecast", "", "right", False), ("Previous", "", "right", False),
+            ("BTC last", "time (day)", "right", False)]
+    sunday = monday + timedelta(days=6)
+    title = f"Week ahead · Mon {week_label(monday)} – Sun {week_label(sunday)}"
+    footer = ["Red-impact USD news (Forex Factory) and earnings from companies worth "
+              f"${ev['earnings_min_market_cap'] / 1e9:,.0f}B+. Earnings times are approximate (before the open / after the close).",
+              "BTC last time = BTC's move on the day this event last happened. Reminders: 1 day, 1 hour and 15 minutes before."]
+    if not rows:
+        rows = [[("–", MUTED), ("", MUTED), ("Nothing big scheduled", TEXT), ("", MUTED), ("", MUTED), ("", MUTED), ("", MUTED)]]
+    cards = [render_card(title, "Times in UK time", cols, rows, footer)]
+
+    # How BTC reacted the last few times, for each tracked event happening this week
+    groups_this_week = [g for g in ev["history_groups"] if any(e.get("group") == g for e in macro)]
+    hist_rows = []
+    for g in groups_this_week:
+        past = [datetime.fromisoformat(x) for x in history.get(g, [])][-ev["history_count"]:]
+        for t in reversed(past):
+            day, d3, d7 = reaction(closes, t)
+            hist_rows.append([(g, TEXT), (f"{t.astimezone(tz):%a %d %b %Y}", MUTED), _pct(day), _pct(d3), _pct(d7)])
+        if not past:
+            hist_rows.append([(g, TEXT), ("history builds up from now", MUTED), ("", MUTED), ("", MUTED), ("", MUTED)])
+    if hist_rows:
+        cards.append(render_card("How BTC reacted last times", "BTC move vs the close the day before",
+                                 [("Event", "", "left", True), ("Date", "", "left", False), ("On the", "day", "right", False),
+                                  ("After", "3 days", "right", False), ("After", "7 days", "right", False)],
+                                 hist_rows, ["Past FOMC dates from the Federal Reserve. Other events are recorded as they happen."]))
+    return cards
+
+
+def reminder_card(label, when, items, history, closes, tz):
+    rows = []
+    for e in items:
+        last = "n/a"
+        if e.get("group") in history:
+            past = [datetime.fromisoformat(x) for x in history[e["group"]] if datetime.fromisoformat(x) < when]
+            if past:
+                moves = [reaction(closes, t)[0] for t in past[-3:]]
+                last = "  ".join(f"{m:+.1f}%" for m in moves if m is not None) or "n/a"
+        rows.append([(e["name"] if "group" in e else f"{e['symbol']} · {e['slot']}", TEXT),
+                     ("pill", "Macro", RED) if "group" in e else ("pill", "Earnings", AMBER),
+                     (e.get("forecast") or "–", TEXT), (e.get("previous") or "–", MUTED), (last, MUTED)])
+    cols = [("Event", "", "left", True), ("Type", "", "center", False), ("Forecast", "", "right", False),
+            ("Previous", "", "right", False), ("BTC on the day", "last 3 times", "right", False)]
+    return render_card(f"{label} · {when.astimezone(tz):%a %d %b %H:%M} UK", "", cols, rows)
+
+
+# ---------------------------------------------------------------- run
+
+
+def run(cfg, mode, dry_run=False, now=None):
+    ev = cfg["events"]
+    tz = ZoneInfo(cfg["schedule"]["timezone"])
+    now = now or datetime.now(timezone.utc)
+    http = Http(timeout=cfg["data"]["timeout_seconds"])
+    state = json.loads(STATE.read_text()) if STATE.exists() else {}
+    history = json.loads(HISTORY.read_text()) if HISTORY.exists() else {}
+    url = os.environ.get("DISCORD_NEWS_WEBHOOK_URL")
+    if not dry_run and not url:
+        raise RuntimeError("DISCORD_NEWS_WEBHOOK_URL secret is not set (see SETUP.md)")
+
+    raw = ff_events(http, ev["calendar_url"], ev["countries"], ev["impacts"])
+    groups = ev["groups"]
+    macro = merge_events(raw, groups)
+    fomc = []
+    try:
+        fomc = fomc_decisions(http.request("GET", ev["fomc_calendar_url"], headers=BROWSER).text)
+    except Exception as e:  # noqa: BLE001
+        log.warning("Fed calendar unavailable: %s", e)
+    history = update_history(history, raw, fomc, now, groups)
+    closes = btc_daily(http, cfg)
+
+    # Earnings for the coming 7 days (state keeps what's already known, so reminders work all week)
+    earnings = []
+    for k in range(8):
+        day = (now + timedelta(days=k)).date()
+        if day.weekday() >= 5:
+            continue
+        try:
+            earnings += mega_earnings(http, ev["earnings_url"], day, ev["earnings_min_market_cap"],
+                                      set(ev.get("earnings_always") or []))
+        except Exception as e:  # noqa: BLE001
+            log.warning("Earnings calendar failed for %s: %s", day, e)
+
+    posts = []
+    sent = set(state.get("sent", []))
+    if mode == "outlook":
+        monday = week_of(now.astimezone(tz).date())
+        week_end = datetime.combine(monday + timedelta(days=7), datetime.min.time(), tz)
+        week_macro = [e for e in macro if now <= e["when"] < week_end]
+        week_earn = [e for e in earnings if now.astimezone(tz).date() <= e["day"] < week_end.date()]
+        cards = outlook_cards(week_macro, week_earn, history, closes, cfg, tz, monday)
+        names = [e["name"] for e in week_macro] + [e["symbol"] for e in week_earn]
+        text = f"**Week ahead** · {', '.join(dict.fromkeys(names)) or 'nothing big scheduled'}"
+        posts.append((text, [(f"week_{i}.png", c, "image/png") for i, c in enumerate(cards)]))
+        state["last_outlook"] = now.isoformat()
+
+    # Reminders: everything with a known time in the next 25 hours
+    upcoming = [e for e in macro + [x for x in earnings if x["when"]] if now < e["when"] <= now + timedelta(hours=25)]
+    later = []
+    for minutes, label in [(m, _label(m)) for m in sorted(ev["reminders_minutes"], reverse=True)]:
+        for when in sorted({e["when"] for e in upcoming}):
+            key = f"{when.isoformat()}|{minutes}"
+            if key in sent:
+                continue
+            lead = when - now
+            if minutes >= 120:
+                if timedelta(hours=2) < lead <= timedelta(minutes=minutes):
+                    items = [e for e in upcoming if e["when"] == when]
+                    posts.append(_reminder_post(label, when, items, history, closes, tz))
+                    sent.add(key)
+            elif lead <= timedelta(minutes=minutes) + timedelta(minutes=ev["reminder_wait_minutes"]):
+                later.append((when - timedelta(minutes=minutes), key, label, when))
+    sent_now = _send(posts, url, ev, dry_run)
+    if not dry_run:
+        state["sent"] = sorted(sent)
+        _save(state, history)
+    # Short-notice reminders: wait in this run until it's time (GitHub's hourly timer can't hit :15)
+    for fire_at, key, label, when in sorted(later):
+        wait = (fire_at - datetime.now(timezone.utc)).total_seconds()
+        if wait > 0:
+            log.info("Waiting %.0f minutes to send the %s reminder", wait / 60, label)
+            if not dry_run:
+                time.sleep(wait)
+        items = [e for e in upcoming if e["when"] == when]
+        sent_now += _send([_reminder_post(label, when, items, history, closes, tz)], url, ev, dry_run)
+        sent.add(key)
+        if not dry_run:
+            state["sent"] = sorted(sent)
+            _save(state, history)
+    return sent_now
+
+
+def _label(minutes):
+    if minutes >= 1440:
+        return "Tomorrow" if minutes == 1440 else f"In {minutes // 1440} days"
+    if minutes >= 60:
+        return "In 1 hour" if minutes == 60 else f"In {minutes // 60} hours"
+    return f"In {minutes} minutes"
+
+
+def _reminder_post(label, when, items, history, closes, tz):
+    names = ", ".join(dict.fromkeys(e["name"] if "group" in e else e["symbol"] + " earnings" for e in items))
+    text = f"⏰ **{label}** · {names} at {when.astimezone(tz):%H:%M} UK"
+    return text, [("reminder.png", reminder_card(label, when, items, history, closes, tz), "image/png")]
+
+
+def _send(posts, url, ev, dry_run):
+    for text, files in posts:
+        ping = ev.get("ping") or ""
+        content = (ping + "\n" + text) if ping else text
+        if dry_run:
+            print(content)
+            for name, data, _ in files:
+                (ROOT / "latest").mkdir(exist_ok=True)
+                (ROOT / "latest" / name).write_bytes(data)
+        else:
+            post_discord(url, content[:1900], files, ping=ping)
+    return len(posts)
+
+
+def _save(state, history):
+    STATE.write_text(json.dumps(state, indent=1, sort_keys=True) + "\n")
+    HISTORY.write_text(json.dumps(history, indent=1, sort_keys=True) + "\n")
+
+
+def outlook_due(now_local, ev, last_outlook):
+    slot = last_slot(now_local, ev["outlook_day"], ev["outlook_time"])
+    if now_local - slot >= timedelta(hours=24):
+        return False
+    return not last_outlook or datetime.fromisoformat(last_outlook) < slot
+
+
+def main(argv=None):
+    p = argparse.ArgumentParser(description="Catalysts: week ahead and reminders")
+    p.add_argument("--outlook", action="store_true", help="post the week-ahead outlook now")
+    p.add_argument("--scheduled", action="store_true", help="hourly run: outlook if it's time, plus reminders")
+    p.add_argument("--dry-run", action="store_true", help="print instead of posting; pictures go to latest/")
+    args = p.parse_args(argv)
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    cfg = load_config()
+    mode = "outlook" if args.outlook else "reminders"
+    if args.scheduled:
+        state = json.loads(STATE.read_text()) if STATE.exists() else {}
+        now_local = datetime.now(ZoneInfo(cfg["schedule"]["timezone"]))
+        if outlook_due(now_local, cfg["events"], state.get("last_outlook")):
+            mode = "outlook"
+    try:
+        run(cfg, mode, dry_run=args.dry_run)
+    except Exception as e:
+        log.exception("Catalysts failed")
+        (ROOT / "run_error.txt").write_text(f"Catalysts: {type(e).__name__}: {e}"[:300], encoding="utf-8")
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+

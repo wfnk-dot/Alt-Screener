@@ -216,6 +216,44 @@ alerts:
   binance_seconds_between_calls: 0.4
 
 # ---------------------------------------------------------------------
+#  Catalysts channel: week ahead, past BTC reactions, and reminders
+# ---------------------------------------------------------------------
+events:
+  # Week-ahead post (UK time)
+  outlook_day: Sunday
+  outlook_time: "17:30"
+  # Reminders before each event, in minutes (1440 = 1 day)
+  reminders_minutes: [1440, 60, 15]
+  # Who to ping: "@here", "@everyone", or "" for none
+  ping: "@here"
+  # Which news: Forex Factory currencies and impact ("High" = red folder)
+  countries: [USD]
+  impacts: [High]
+  # Earnings: only companies worth at least this many dollars (500000000000 = $500B, the S&P giants)
+  earnings_min_market_cap: 500000000000
+  # Earnings to always include whatever their size, e.g. [COIN, MSTR]
+  earnings_always: []
+  # Event names that count as the same thing (Forex Factory titles). These are merged into one row,
+  # and their BTC reaction history is tracked.
+  groups:
+    FOMC: ["Federal Funds Rate", "FOMC Statement", "FOMC Press Conference"]
+    CPI: ["CPI m/m", "Core CPI m/m", "CPI y/y"]
+    Jobs report (NFP): ["Non-Farm Employment Change", "Unemployment Rate", "Average Hourly Earnings m/m"]
+    PCE: ["Core PCE Price Index m/m", "PCE Price Index m/m"]
+    GDP: ["Advance GDP q/q", "Prelim GDP q/q", "Final GDP q/q"]
+    PPI: ["PPI m/m", "Core PPI m/m"]
+    Retail sales: ["Retail Sales m/m", "Core Retail Sales m/m"]
+  # Which of those get the "How BTC reacted last times" table, and how many past times to show
+  history_groups: [FOMC, CPI, Jobs report (NFP), PCE]
+  history_count: 4
+  # Sources (normally no need to change)
+  calendar_url: https://nfs.faireconomy.media/ff_calendar_thisweek.json
+  fomc_calendar_url: https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm
+  earnings_url: https://api.nasdaq.com/api/calendar/earnings
+  # The 1-hour and 15-minute reminders: a run this many minutes early waits for the right moment
+  reminder_wait_minutes: 75
+
+# ---------------------------------------------------------------------
 #  TradingView watchlist file
 # ---------------------------------------------------------------------
 tradingview:

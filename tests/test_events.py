@@ -1,0 +1,100 @@
+import json
+from datetime import date, datetime, timedelta, timezone
+
+from screener.events import fomc_decisions, ff_events, group_of, mega_earnings, merge_events, reaction, update_history
+from tests.conftest import DATA
+from tests.test_data import FakeHttp, FakeResponse
+
+GROUPS = {"FOMC": ["Federal Funds Rate", "FOMC Statement", "FOMC Press Conference"], "PCE": ["Core PCE Price Index m/m"]}
+
+
+def ff():
+    payload = json.loads((DATA / "ff_calendar_thisweek.json").read_text())
+    return ff_events(FakeHttp({"faireconomy": FakeResponse(payload=payload)}), "https://nfs.faireconomy.media/x", ["USD"], ["High"])
+
+
+def test_forex_factory_red_usd_only():
+    events = ff()
+    assert events and all(e["country"] == "USD" for e in events)
+    titles = {e["title"] for e in events}
+    assert {"Federal Funds Rate", "FOMC Statement", "Core PCE Price Index m/m"} <= titles
+    fed = next(e for e in events if e["title"] == "Federal Funds Rate")
+    assert fed["when"] == datetime(2026, 10, 28, 18, 0, tzinfo=timezone.utc)  # 2pm New York (EDT)
+
+
+def test_merge_fomc_into_one_row():
+    rows = merge_events(ff(), GROUPS)
+    fomc = [r for r in rows if r["name"] == "FOMC"]
+    assert len(fomc) == 1 and len(fomc[0]["titles"]) == 3
+    assert fomc[0]["when"] == datetime(2026, 10, 28, 18, 0, tzinfo=timezone.utc)
+    assert group_of("CPI m/m", {"CPI": ["CPI m/m"]}) == "CPI" and group_of("Other", GROUPS) is None
+
+
+def test_fomc_dates_from_fed_page():
+    times = fomc_decisions((DATA / "fomc_calendar.html").read_text())
+    days = {t.date() for t in times}
+    assert date(2026, 10, 28) in days and date(2026, 1, 28) in days and date(2025, 12, 10) in days
+    assert date(2026, 10, 27) not in days  # first day of the meeting isn't the decision
+    jan = next(t for t in times if t.date() == date(2026, 1, 28))
+    assert jan.hour == 19  # 2pm New York in winter = 19:00 UTC
+
+
+def test_mega_cap_earnings_only():
+    payload = json.loads((DATA / "nasdaq_earnings_2026-10-29.json").read_text())
+    rows = mega_earnings(FakeHttp({"nasdaq": FakeResponse(payload=payload)}), "https://api.nasdaq.com/x",
+                         date(2026, 10, 29), 500e9, set())
+    assert {r["symbol"] for r in rows} == {"AMZN", "LLY", "MA", "INTC"}
+    amzn = next(r for r in rows if r["symbol"] == "AMZN")
+    assert amzn["slot"] == "after the close" and amzn["when"] == datetime(2026, 10, 29, 20, 5, tzinfo=timezone.utc)
+    always = mega_earnings(FakeHttp({"nasdaq": FakeResponse(payload=payload)}), "https://api.nasdaq.com/x",
+                           date(2026, 10, 29), 500e9, {"CAT"})
+    assert "CAT" in {r["symbol"] for r in always}
+
+
+def test_btc_reaction():
+    d = date(2026, 10, 28)
+    closes = {d - timedelta(days=1): 100.0, d: 102.0, d + timedelta(days=3): 95.0, d + timedelta(days=7): 110.0}
+    day, d3, d7 = reaction(closes, datetime(2026, 10, 28, 18, tzinfo=timezone.utc))
+    assert round(day, 6) == 2.0 and round(d3, 6) == -5.0 and round(d7, 6) == 10.0
+    assert reaction({d - timedelta(days=1): 100.0, d: 101.0}, datetime(2026, 10, 28, 18, tzinfo=timezone.utc))[1] is None
+
+
+def test_history_records_past_events_once():
+    now = datetime(2026, 10, 30, tzinfo=timezone.utc)
+    h = update_history({}, ff(), [datetime(2026, 9, 16, 18, tzinfo=timezone.utc)], now, GROUPS)
+    assert "2026-10-28T18:00:00+00:00" in h["FOMC"] and "2026-09-16T18:00:00+00:00" in h["FOMC"]
+    assert len(h["FOMC"]) == 2  # three FOMC titles that day count once
+    again = update_history(h, ff(), [], now, GROUPS)
+    assert len(again["FOMC"]) == 2 and len(again["PCE"]) == 1
+
+
+def test_reminder_timing(cfg, monkeypatch, capsys, tmp_path):
+    from screener import events
+
+    now = datetime(2026, 11, 3, 12, 40, tzinfo=timezone.utc)
+    soon = {"title": "CPI m/m", "when": now + timedelta(minutes=50), "forecast": "0.3%", "previous": "0.2%", "country": "USD"}
+    tomorrow = {"title": "Federal Funds Rate", "when": now + timedelta(hours=20), "forecast": "4.00%", "previous": "4.00%",
+                "country": "USD"}
+    far = {"title": "PPI m/m", "when": now + timedelta(days=3), "forecast": "", "previous": "", "country": "USD"}
+
+    class NoNet:
+        def __init__(self, *a, **k):
+            pass
+
+        def request(self, *a, **k):
+            raise RuntimeError("no network in tests")
+
+    monkeypatch.setattr(events, "Http", NoNet)
+    monkeypatch.setattr(events, "ROOT", tmp_path)
+    monkeypatch.setattr(events, "ff_events", lambda *a, **k: [soon, tomorrow, far])
+    monkeypatch.setattr(events, "btc_daily", lambda *a, **k: {})
+    monkeypatch.setattr(events, "mega_earnings", lambda *a, **k: [])
+    monkeypatch.setattr(events, "STATE", DATA / "does-not-exist.json")
+    monkeypatch.setattr(events, "HISTORY", DATA / "does-not-exist-either.json")
+    sent = events.run(cfg, "reminders", dry_run=True, now=now)
+    out = capsys.readouterr().out
+    assert sent == 3
+    assert "**Tomorrow** · FOMC" in out          # 20 hours out: the day-before reminder
+    assert "**In 1 hour** · CPI" in out          # 50 minutes out: 1-hour reminder goes now
+    assert "**In 15 minutes** · CPI" in out      # and the 15-minute one waits for its moment
+    assert "PPI" not in out                      # 3 days out: nothing yet
