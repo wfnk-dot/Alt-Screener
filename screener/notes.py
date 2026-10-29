@@ -34,7 +34,7 @@ def timeframe_note(bars, ind, weekly):
     if beyond(b):
         prev = [x.quote_volume for x in bars[max(0, b - 20):b]]
         mult = bars[b].quote_volume / (sum(prev) / len(prev)) if prev and sum(prev) else None
-        vol = f" on {mult:.1f}x normal volume" if mult else ""
+        vol = f" on {mult:.1f}x normal volume" if mult and mult >= 1.5 else ""
         parts.append(f"broke {'above' if up else 'below'} the bands {_date(bars[b], weekly)}{vol}")
 
     # Holding: candles since price last touched the fast EMA
@@ -50,7 +50,7 @@ def timeframe_note(bars, ind, weekly):
     elif touched >= 2:
         parts.append(f"hasn't touched the fast EMA in {touched} {unit}s")
     else:
-        parts.append(f"tapped the fast EMA last {unit}")
+        parts.append("tapped the fast EMA yesterday" if unit == "day" else "tapped the fast EMA last week")
     return "; ".join(parts)
 
 
