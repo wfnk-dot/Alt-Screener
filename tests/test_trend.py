@@ -1,24 +1,24 @@
 import random
 
 from screener.indicators import pivots, to_weekly
-from screener.tags import in_range_band, tag_coin, trend
+from screener.tags import tag_coin, trend
 from screener.metrics import Coin
 from tests.conftest import make_bars, zigzag
 
 
 def test_uptrend(cfg):
     bars = make_bars(zigzag(120, 0.01))
-    assert trend(bars, 3, cfg["indicators"], force_range_check=True) == "Up"
+    assert trend(bars, cfg["indicators"]) == "Up"
 
 
 def test_downtrend(cfg):
     bars = make_bars(zigzag(120, -0.01))
-    assert trend(bars, 3, cfg["indicators"], force_range_check=True) == "Down"
+    assert trend(bars, cfg["indicators"]) == "Down"
 
 
 def test_flat_range(cfg):
     bars = make_bars(zigzag(120, 0.0))
-    assert trend(bars, 3, cfg["indicators"], force_range_check=True) == "Range"
+    assert trend(bars, cfg["indicators"]) == "Range"
 
 
 def test_choppy_is_range(cfg):
@@ -27,21 +27,39 @@ def test_choppy_is_range(cfg):
     for _ in range(150):
         closes.append(closes[-1] * (1 + rnd.uniform(-0.03, 0.03)))
     closes = [100 + (c - 100) * 0.1 for c in closes]  # tight chop
-    assert trend(make_bars(closes), 3, cfg["indicators"], force_range_check=True) == "Range"
+    assert trend(make_bars(closes), cfg["indicators"]) == "Range"
 
 
-def test_range_band_forces_range(cfg):
+def test_flat_bands_are_range(cfg):
     ind = cfg["indicators"]
-    # Gentle grind up with big wicks: EMAs and swings say Up, but the closes
-    # sit inside 2.5 x ATR, so the daily tag is forced to Range
+    # Gentle grind up with big wicks: bands green and never flip, but barely open
     closes = [100 * 1.0005 ** i for i in range(120)]
-    bars = make_bars(closes, wick=0.05)
-    assert in_range_band(bars, ind)
-    assert trend(bars, 3, ind, force_range_check=True) == "Range"
+    assert trend(make_bars(closes, wick=0.05), ind) == "Range"
+
+
+def test_flip_flopping_is_range(cfg):
+    ind = cfg["indicators"]
+    # Strong trend, then the last 30 candles swing hard enough to flip the bands repeatedly
+    closes = zigzag(90, 0.01) + [zigzag(90, 0.01)[-1] * (1 + 0.15 * ((i // 6) % 2 * 2 - 1)) for i in range(30)]
+    assert trend(make_bars(closes), ind) == "Range"
+
+
+def test_fresh_flip_is_range_until_bands_open(cfg):
+    from screener.tags import colour_states
+
+    ind = cfg["indicators"]
+    closes = zigzag(100, -0.01, amp=0.0)
+    # Rally until the bands just turn green: that candle is a fresh flip, bands not open yet
+    while colour_states(closes, ind)[0][-1] != 1:
+        closes.append(closes[-1] * 1.03)
+    assert trend(make_bars(closes), ind) == "Range"
+    # Keep rallying: bands open up, so it becomes a trend
+    more = closes + [closes[-1] * 1.03 ** i for i in range(1, 15)]
+    assert trend(make_bars(more), ind) == "Up"
 
 
 def test_not_enough_history(cfg):
-    assert trend(make_bars(zigzag(20, 0.01)), 3, cfg["indicators"]) == "n/a"
+    assert trend(make_bars(zigzag(20, 0.01)), cfg["indicators"]) == "n/a"
 
 
 def test_weekly_trend_and_tags(cfg):
@@ -84,7 +102,7 @@ def test_close_below_ema25_still_up(cfg):
     bars = make_bars(closes)
     es = ema([b.close for b in bars], ind["ema_slow"])
     assert bars[-1].close < es[-1]
-    assert trend(bars, 3, ind) == "Up"
+    assert trend(bars, ind) == "Up"
 
 
 def test_intraday_trends_tagged(cfg):

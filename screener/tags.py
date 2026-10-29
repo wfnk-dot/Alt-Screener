@@ -1,59 +1,36 @@
 """Info-only tags: trend (weekly/daily/4h/1h), weekly RSI, new listing, funding."""
-from .indicators import atr, ema, pivots, rsi_series, to_weekly
+from .indicators import atr, ema, rsi_series, to_weekly
 
 
-def _rising(series, bars_back):
-    return series[-1] is not None and series[-1 - bars_back] is not None and series[-1] > series[-1 - bars_back]
+def colour_states(closes, ind):
+    """+1 where EMA fast is above EMA slow (green bands), -1 below (red), None before both exist.
+    Same colouring as the XO Bands indicator."""
+    f, s = ema(closes, ind["ema_fast"]), ema(closes, ind["ema_slow"])
+    out = []
+    for a, b in zip(f, s):
+        out.append(None if a is None or b is None else (1 if a > b else -1 if a < b else 0))
+    return out, f, s
 
 
-def _falling(series, bars_back):
-    return series[-1] is not None and series[-1 - bars_back] is not None and series[-1] < series[-1 - bars_back]
+def trend(bars, ind):
+    """'Up', 'Down', 'Range', or 'n/a' (not enough history).
 
-
-def in_range_band(bars, ind):
-    """True when the last N closes all sit inside a band `multiple` x ATR wide around their mean."""
-    n = ind["range_lookback_days"]
-    a = atr(bars, ind["atr_period"])
-    if len(bars) < n or a is None:
-        return False
-    closes = [b.close for b in bars[-n:]]
-    mean = sum(closes) / n
-    half_band = ind["range_band_atr_multiple"] * a / 2
-    return max(abs(c - mean) for c in closes) < half_band
-
-
-def trend(bars, pivot_n, ind, force_range_check=False):
-    """'Up', 'Down', 'Range', or 'n/a' (not enough history)."""
-    fast, slow, back = ind["ema_fast"], ind["ema_slow"], ind["ema_rising_bars"]
-    if len(bars) < slow + back:
+    Up: bands green, at most `trend_max_flips` colour flips in the last `trend_flip_lookback` candles,
+    and the bands open (EMA gap at least `trend_min_gap_atr` x ATR). Down: the same, red.
+    Anything else (flip-flopping, flat or squeezed bands, a fresh flip) is Range.
+    """
+    if len(bars) < ind["ema_slow"] + 2:
         return "n/a"
-    if force_range_check and in_range_band(bars, ind):
+    states, f, s = colour_states([b.close for b in bars], ind)
+    window = [x for x in states[-ind["trend_flip_lookback"]:] if x is not None]
+    flips = sum(1 for a, b in zip(window, window[1:]) if a != b)
+    a = atr(bars, ind["atr_period"]) or atr(bars, max(2, len(bars) - 2))
+    if not a or flips > ind["trend_max_flips"]:
         return "Range"
-    closes = [b.close for b in bars]
-    ef, es = ema(closes, fast), ema(closes, slow)
-    highs = [b.high for b in bars]
-    lows = [b.low for b in bars]
-    ph = [highs[i] for i in pivots(highs, pivot_n, "high")]
-    pl = [lows[i] for i in pivots(lows, pivot_n, "low")]
-    have_swings = len(ph) >= 2 and len(pl) >= 2
-    # Up = EMA12 above EMA25, both rising, and higher swing highs + higher swing lows. Down = mirror.
-    if (
-        ef[-1] > es[-1]
-        and _rising(ef, back)
-        and _rising(es, back)
-        and have_swings
-        and ph[-1] > ph[-2]
-        and pl[-1] > pl[-2]
-    ):
+    gap = (f[-1] - s[-1]) / a
+    if states[-1] == 1 and gap >= ind["trend_min_gap_atr"]:
         return "Up"
-    if (
-        ef[-1] < es[-1]
-        and _falling(ef, back)
-        and _falling(es, back)
-        and have_swings
-        and ph[-1] < ph[-2]
-        and pl[-1] < pl[-2]
-    ):
+    if states[-1] == -1 and -gap >= ind["trend_min_gap_atr"]:
         return "Down"
     return "Range"
 
@@ -77,10 +54,10 @@ def tag_coin(coin, cfg, intraday=None):
     rsi, low, high = weekly_rsi(weekly, ind)
     intraday = intraday or {}
     t = {
-        "trend_w": trend(weekly, ind["pivot_bars_weekly"], ind),
-        "trend_d": trend(coin.bars, ind["pivot_bars_daily"], ind, force_range_check=True),
-        "trend_4h": trend(intraday["4h"], ind["pivot_bars_4h"], ind) if intraday.get("4h") else "n/a",
-        "trend_1h": trend(intraday["1h"], ind["pivot_bars_1h"], ind) if intraday.get("1h") else "n/a",
+        "trend_w": trend(weekly, ind),
+        "trend_d": trend(coin.bars, ind),
+        "trend_4h": trend(intraday["4h"], ind) if intraday.get("4h") else "n/a",
+        "trend_1h": trend(intraday["1h"], ind) if intraday.get("1h") else "n/a",
         "wrsi": rsi,
         "wrsi_low": low,
         "wrsi_high": high,

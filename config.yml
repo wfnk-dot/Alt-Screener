@@ -121,22 +121,19 @@ indicators:
   # above this (dips held), red if the highest never got above the next one (never strong)
   rsi_range_strong_low: 45
   rsi_range_weak_high: 55
+  # Trend bands (same as the XO Bands indicator: green when fast EMA is above slow EMA)
   ema_fast: 12
   ema_slow: 25
-  # Both EMAs must be higher now than this many bars ago to count as "rising"
-  ema_rising_bars: 5
-  # Swing points: a high/low is a swing if it's the highest/lowest within
-  # this many bars on each side
-  pivot_bars_daily: 3
-  pivot_bars_weekly: 2
-  pivot_bars_4h: 3
-  pivot_bars_1h: 3
+  # Trend = Up (or Down) when the bands are green (red) AND:
+  #   - they flipped colour at most this many times in the last N candles
+  trend_flip_lookback: 30
+  trend_max_flips: 1
+  #   - they're open: the gap between the EMAs is at least this many ATRs
+  #     (flat or squeezed bands = stalling = Range)
+  trend_min_gap_atr: 0.3
+  # Anything else is Range (flip-flopping, flat bands, or a fresh flip still opening up)
   # How many 4h / 1h candles to load for those trends
   intraday_candles: 200
-  # Force "Range" on the daily tag when the last N daily closes all sit
-  # inside a band this many ATRs wide, centred on their average
-  range_lookback_days: 30
-  range_band_atr_multiple: 2.5
   # Volume ratio: compares the last 7 days to the last 30 days
   volume_short_days: 7
   volume_long_days: 30
