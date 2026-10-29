@@ -264,7 +264,8 @@ def run(cfg, mode, dry_run=False, now=None):
     history = json.loads(HISTORY.read_text()) if HISTORY.exists() else {}
     url = os.environ.get("DISCORD_NEWS_WEBHOOK_URL")
     if not dry_run and not url:
-        raise RuntimeError("DISCORD_NEWS_WEBHOOK_URL secret is not set (see SETUP.md)")
+        log.warning("DISCORD_NEWS_WEBHOOK_URL secret is not set yet (see SETUP.md), so nothing to do")
+        return 0
 
     raw = ff_events(http, ev["calendar_url"], ev["countries"], ev["impacts"])
     groups = ev["groups"]
