@@ -164,6 +164,9 @@ def merge_events(events, groups):
             m["titles"].append(e["title"])
             if e["when"] < m["when"]:
                 m["when"], m["forecast"], m["previous"] = e["when"], e["forecast"], e["previous"]
+    for m in merged.values():
+        if m["group"] == "FOMC" and any("Projections" in t for t in m["titles"]):
+            m["name"] = "FOMC + dot plot"
     return sorted(merged.values(), key=lambda e: e["when"])
 
 
@@ -181,6 +184,13 @@ def update_history(history, events, fomc, now, groups):
     for g in history:
         history[g] = sorted(history[g])
     return history
+
+
+def typical_move(times, closes, before, count):
+    """Average size (up or down) of BTC's move on the day, over the last `count` times before `before`."""
+    past = [datetime.fromisoformat(x) for x in times if datetime.fromisoformat(x) < before][-count:]
+    moves = [abs(m) for m in (reaction(closes, t)[0] for t in past) if m is not None]
+    return sum(moves) / len(moves) if moves else None
 
 
 def reaction(closes, when):
@@ -211,11 +221,7 @@ def outlook_cards(macro, earnings, history, closes, cfg, tz, monday, start=None)
     for when, e in sorted(items, key=lambda x: x[0]):
         local = when.astimezone(tz)
         macro_row = "group" in e
-        last = None
-        if macro_row and e["group"] in history:
-            past = [datetime.fromisoformat(x) for x in history[e["group"]] if datetime.fromisoformat(x) < when]
-            if past:
-                last = reaction(closes, past[-1])[0]
+        typical = typical_move(history.get(e["group"]) or [], closes, when, ev["history_count"]) if macro_row else None
         rows.append([
             (f"{local:%a} {local.day} {local:%b}", TEXT),
             (f"{local:%H:%M}" if (macro_row or e["when"]) else "TBC", TEXT),
@@ -223,17 +229,18 @@ def outlook_cards(macro, earnings, history, closes, cfg, tz, monday, start=None)
             ("pill", "Macro", RED) if macro_row else ("pill", "Earnings", AMBER),
             (e["forecast"] or "–", TEXT),
             (e["previous"] or "–", MUTED),
-            _pct(last) if macro_row and last is not None else ("–", MUTED),
+            (f"±{typical:.1f}%", TEXT) if typical is not None else ("–", MUTED),
         ])
     cols = [("Day", "", "left", True), ("Time", "UK", "left", False), ("Event", "", "left", True),
             ("Type", "", "center", False), ("Forecast", "", "right", False), ("Previous", "", "right", False),
-            ("BTC last", "time (day)", "right", False)]
+            ("Typical BTC", "move on the day", "right", False)]
     sunday = monday + timedelta(days=6)
     first = start if start and start < monday else monday
     title = f"Week ahead · {first:%a} {week_label(first)} – Sun {week_label(sunday)}"
     footer = ["High-impact US news (TradingView economic calendar) and big-tech earnings. "
               "Earnings times are approximate (before the open / after the close).",
-              "BTC last time = BTC's move on the day this event last happened. Reminders: 1 day, 1 hour and 15 minutes before."]
+              f"Typical BTC move = average size of BTC's move on the day, the last {ev['history_count']} times. "
+              "Dot plot = the Fed also publishes its rate forecasts. Reminders: 1 day, 1 hour and 15 minutes before."]
     if not rows:
         rows = [[("–", MUTED), ("", MUTED), ("Nothing big scheduled", TEXT), ("", MUTED), ("", MUTED), ("", MUTED), ("", MUTED)]]
     cards = [render_card(title, "Times in UK time", cols, rows, footer)]
@@ -328,9 +335,9 @@ def run(cfg, mode, dry_run=False, now=None):
         week_earn = [e for e in earnings if now.astimezone(tz).date() <= e["day"] < week_end.date()
                      and (e["when"] is None or e["when"] >= now)]
         cards = outlook_cards(week_macro, week_earn, history, closes, cfg, tz, monday, start=now.astimezone(tz).date())
-        names = [e["name"] for e in week_macro] + [e["company"] for e in week_earn]
-        text = f"**Week ahead** · {', '.join(dict.fromkeys(names)) or 'nothing big scheduled'}"
-        posts.append((text, [(f"week_{i}.png", c, "image/png") for i, c in enumerate(cards)]))
+        posts.append(("**Week ahead**", [("week_ahead.png", cards[0], "image/png")]))
+        for i, c in enumerate(cards[1:], 1):
+            posts.append((None, [(f"week_history_{i}.png", c, "image/png")]))  # own message, no ping
         state["last_outlook"] = now.isoformat()
 
     # Reminders: everything with a known time in the next 25 hours
@@ -385,8 +392,8 @@ def _reminder_post(label, when, items, history, closes, tz):
 
 def _send(posts, url, ev, dry_run):
     for text, files in posts:
-        ping = ev.get("ping") or ""
-        content = (ping + "\n" + text) if ping else text
+        ping = (ev.get("ping") or "") if text else ""  # only the first message of a post pings
+        content = ((ping + "\n" + text) if ping else text) if text else ""
         if dry_run:
             print(content)
             for name, data, _ in files:

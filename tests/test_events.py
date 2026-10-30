@@ -116,3 +116,18 @@ def test_reminder_timing(cfg, monkeypatch, capsys, tmp_path):
     assert "**In 1 hour** · CPI" in out          # 50 minutes out: 1-hour reminder goes now
     assert "**In 15 minutes** · CPI" in out      # and the 15-minute one waits for its moment
     assert "PPI" not in out                      # 3 days out: nothing yet
+
+
+def test_dot_plot_fomc_and_typical_move():
+    from screener.events import typical_move
+
+    when = datetime(2026, 12, 9, 19, tzinfo=timezone.utc)
+    rows = merge_events([{"title": "Fed Interest Rate Decision", "when": when, "forecast": "", "previous": "", "country": "US"},
+                         {"title": "FOMC Economic Projections", "when": when, "forecast": "", "previous": "", "country": "US"}],
+                        {"FOMC": ["Fed Interest Rate Decision", "FOMC Economic Projections"]})
+    assert [r["name"] for r in rows] == ["FOMC + dot plot"]
+    d1, d2 = date(2026, 9, 16), date(2026, 10, 28)
+    closes = {d1 - timedelta(days=1): 100.0, d1: 103.0, d2 - timedelta(days=1): 100.0, d2: 99.0}
+    times = ["2026-09-16T18:00:00+00:00", "2026-10-28T18:00:00+00:00"]
+    assert round(typical_move(times, closes, when, 9), 6) == 2.0  # average of +3% and -1%, ignoring direction
+    assert typical_move([], closes, when, 9) is None
