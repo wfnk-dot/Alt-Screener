@@ -18,7 +18,7 @@ from zoneinfo import ZoneInfo
 from .config import ROOT, load_config
 from .data import Http, binance_web_klines, hyperliquid_candles
 from .gate import last_slot
-from .image import AMBER, GREEN, MUTED, RED, TEXT, render_card
+from .image import AMBER, GREEN, MUTED, RED, TEXT, render_card, tint
 from .output import post_discord, week_label, week_of
 
 log = logging.getLogger("events")
@@ -204,6 +204,17 @@ def reaction(btc, when):
     return tuple(pct)
 
 
+def follow_through(day, d3, d7):
+    """Faint red if it kept falling (each later move lower), faint green if it kept rising, else None."""
+    if None in (day, d3, d7):
+        return None
+    if day < 0 and d3 < day and d7 < d3:
+        return tint(RED)
+    if day > 0 and d3 > day and d7 > d3:
+        return tint(GREEN)
+    return None
+
+
 def _range_pct(btc, day):
     """High-to-low range of that day (wicks included), as % of the close before."""
     bar, prev = btc.get(day), btc.get(day - timedelta(days=1))
@@ -212,11 +223,13 @@ def _range_pct(btc, day):
     return (bar.high - bar.low) / prev.close * 100
 
 
-def day_range(btc, when, days_before=5):
-    """(event day's range %, that range ÷ the average range of the `days_before` days before it)."""
+def day_range(btc, when):
+    """(event day's range %, that range ÷ the average range of the earlier weekdays of the same week).
+    Wednesday's event is compared with Monday and Tuesday; weekends never count; Monday has nothing to compare."""
     d = when.date()
     rng = _range_pct(btc, d)
-    before = [r for r in (_range_pct(btc, d - timedelta(days=k)) for k in range(1, days_before + 1)) if r is not None]
+    earlier = range(1, min(d.weekday(), 5) + 1)
+    before = [r for r in (_range_pct(btc, d - timedelta(days=k)) for k in earlier) if r is not None]
     if rng is None or not before:
         return rng, None
     normal = sum(before) / len(before)
@@ -271,23 +284,25 @@ def outlook_cards(macro, earnings, history, btc, cfg, tz, monday, start=None):
         past = [datetime.fromisoformat(x) for x in history.get(g, [])][-ev["history_count"]:]
         for t in reversed(past):
             day, d3, d7 = reaction(btc, t)
-            rng, ratio = day_range(btc, t, ev["range_days_before"])
+            rng, ratio = day_range(btc, t)
             lt = t.astimezone(tz)
-            hist_rows.append([(g, TEXT), (f"{lt:%a} {lt.day} {lt:%b %Y}", MUTED), _pct(day),
+            band = follow_through(day, d3, d7)
+            hist_rows.append([(g, TEXT), (f"{lt:%a} {lt.day} {lt:%b %Y}", MUTED),
+                              (*_pct(day), band), (*_pct(d3), band), (*_pct(d7), band),
                               ("n/a", MUTED) if rng is None else (f"{rng:.1f}%", TEXT),
-                              ("n/a", MUTED) if ratio is None else (f"{ratio:.1f}x", AMBER if ratio >= ev["range_highlight"] else TEXT),
-                              _pct(d3), _pct(d7)])
+                              ("–", MUTED) if ratio is None else (f"{ratio:.1f}x", AMBER if ratio >= ev["range_highlight"] else TEXT)])
         if not past:
             hist_rows.append([(g, TEXT), ("history builds up from now", MUTED)] + [("", MUTED)] * 5)
     if hist_rows:
         cards.append(render_card("How BTC reacted last times", "Moves vs the close the day before",
                                  [("Event", "", "left", True), ("Date", "", "left", False), ("On the", "day", "right", False),
-                                  ("Day's", "range", "right", False), ("vs the", f"{ev['range_days_before']} days before", "right", False),
-                                  ("After", "3 days", "right", False), ("After", "7 days", "right", False)],
+                                  ("After", "3 days", "right", False), ("After", "7 days", "right", False),
+                                  ("Day's", "range", "right", False), ("vs earlier", "that week", "right", False)],
                                  hist_rows,
-                                 [f"Day's range = high to low, wicks included. vs the {ev['range_days_before']} days before = that range "
-                                  f"divided by the average range of the {ev['range_days_before']} days before it (2.0x = twice as wild). "
-                                  f"Yellow = {ev['range_highlight']:g}x or more.",
+                                 ["Red / green shading = it kept falling / kept rising (day → 3 days → 7 days). "
+                                  "Day's range = high to low, wicks included.",
+                                  "vs earlier that week = that range divided by the average range of the weekdays before it in the same "
+                                  f"week (Wed is compared with Mon-Tue; 2.0x = twice as wild). Yellow = {ev['range_highlight']:g}x or more.",
                                   "Past dates: Federal Reserve (FOMC) and TradingView's economic calendar; new ones are added as they happen."]))
     return cards
 

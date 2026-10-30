@@ -18,6 +18,11 @@ AMBER = (251, 191, 36)
 TREND_COLOURS = {"Up": GREEN, "Down": RED, "Range": (160, 166, 178), "n/a": (110, 115, 125)}
 
 
+def tint(colour, strength=0.12):
+    """A very faint version of `colour` over the card background (for shading cells)."""
+    return tuple(int(BG[n] * (1 - strength) + colour[n] * strength) for n in range(3))
+
+
 def _font(weight, size):
     return ImageFont.truetype(str(FONTS / f"Inter-{weight}.otf"), size * S)
 
@@ -122,7 +127,7 @@ def render_card(title, subtitle, columns, rows, footer=()):
     """House style for every Discord picture: dark card, title, optional subtitle, a table, small footer lines.
 
     columns: [(header line 1, header line 2, "left"/"center"/"right", bold?)]
-    rows: lists of cells, each (text, colour) or ("pill", text, colour)
+    rows: lists of cells, each (text, colour), (text, colour, background) or ("pill", text, colour)
     """
     body, bold = _font("Regular", 15), _font("SemiBold", 15)
     head = _font("SemiBold", 12)
@@ -182,7 +187,10 @@ def render_card(title, subtitle, columns, rows, footer=()):
                 d.rounded_rectangle([(px, mid - 12 * S), (px + pw, mid + 12 * S)], radius=12 * S, fill=fill)
                 d.text((px + pw / 2, mid), text, font=bold, fill=colour, anchor="mm")
             else:
-                text, colour = row[j]
+                text, colour = row[j][:2]
+                if len(row[j]) > 2 and row[j][2]:
+                    # faint band behind the cell; neighbouring tinted cells join up
+                    d.rectangle([(x - gap / 2, y + 3 * S), (x + col_w[j] + gap / 2, y + row_h - 3 * S)], fill=row[j][2])
                 font = bold if col[3] else body
                 d.text((x_for(col[2], x, col_w[j], font.getlength(text)), mid), text, font=font, fill=colour, anchor="lm")
             x += col_w[j] + gap

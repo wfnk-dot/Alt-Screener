@@ -92,8 +92,21 @@ def test_day_range_vs_days_before():
     for k in range(7, 0, -1):  # quiet days before: 2% high-low range on a 100 close
         btc[d - timedelta(days=k)] = _bar(d - timedelta(days=k), 100.0, 101.0, 99.0)
     btc[d] = _bar(d, 100.0, 103.0, 97.0)  # event day: 6% range with wicks
-    rng, ratio = day_range(btc, datetime(2026, 11, 6, 13, 30, tzinfo=timezone.utc), 5)
+    btc[d - timedelta(days=5)] = _bar(d - timedelta(days=5), 100.0, 150.0, 50.0)  # wild Sunday: weekends don't count
+    rng, ratio = day_range(btc, datetime(2026, 11, 6, 13, 30, tzinfo=timezone.utc))  # Friday: vs Mon-Thu
     assert round(rng, 6) == 6.0 and round(ratio, 6) == 3.0
+    assert day_range(btc, datetime(2026, 11, 2, 15, tzinfo=timezone.utc))[1] is None  # Monday: nothing earlier that week
+
+
+def test_follow_through_shading():
+    from screener.events import follow_through
+
+    assert follow_through(-2.0, -2.7, -5.0) is not None   # kept falling (4 Sep)
+    assert follow_through(0.1, 2.9, 9.0) is not None      # kept rising (3 Apr)
+    assert follow_through(2.6, 6.0, 5.3) is None          # rose then gave some back
+    assert follow_through(-0.4, 1.0, -2.7) is None        # flip-flop
+    assert follow_through(-1.0, None, None) is None       # not finished yet
+    assert follow_through(-2.0, -2.7, -5.0) != follow_through(0.1, 2.9, 9.0)
 
 
 def test_history_records_past_events_once():
