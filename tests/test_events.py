@@ -69,12 +69,31 @@ def test_tradingview_calendar(cfg):
     assert sum(1 for m in merged if m["name"] == "FOMC" and m["when"].date() == date(2026, 10, 28)) == 1
 
 
+def _bar(d, close, high=None, low=None):
+    from screener.data import Bar
+
+    return Bar(d, close, high if high is not None else close, low if low is not None else close, close, 0)
+
+
 def test_btc_reaction():
     d = date(2026, 10, 28)
-    closes = {d - timedelta(days=1): 100.0, d: 102.0, d + timedelta(days=3): 95.0, d + timedelta(days=7): 110.0}
-    day, d3, d7 = reaction(closes, datetime(2026, 10, 28, 18, tzinfo=timezone.utc))
+    btc = {d - timedelta(days=1): _bar(d - timedelta(days=1), 100.0), d: _bar(d, 102.0),
+           d + timedelta(days=3): _bar(d + timedelta(days=3), 95.0), d + timedelta(days=7): _bar(d + timedelta(days=7), 110.0)}
+    day, d3, d7 = reaction(btc, datetime(2026, 10, 28, 18, tzinfo=timezone.utc))
     assert round(day, 6) == 2.0 and round(d3, 6) == -5.0 and round(d7, 6) == 10.0
-    assert reaction({d - timedelta(days=1): 100.0, d: 101.0}, datetime(2026, 10, 28, 18, tzinfo=timezone.utc))[1] is None
+    assert reaction({d - timedelta(days=1): _bar(d, 100.0), d: _bar(d, 101.0)}, datetime(2026, 10, 28, 18, tzinfo=timezone.utc))[1] is None
+
+
+def test_day_range_vs_days_before():
+    from screener.events import day_range
+
+    d = date(2026, 11, 6)
+    btc = {}
+    for k in range(7, 0, -1):  # quiet days before: 2% high-low range on a 100 close
+        btc[d - timedelta(days=k)] = _bar(d - timedelta(days=k), 100.0, 101.0, 99.0)
+    btc[d] = _bar(d, 100.0, 103.0, 97.0)  # event day: 6% range with wicks
+    rng, ratio = day_range(btc, datetime(2026, 11, 6, 13, 30, tzinfo=timezone.utc), 5)
+    assert round(rng, 6) == 6.0 and round(ratio, 6) == 3.0
 
 
 def test_history_records_past_events_once():
@@ -118,8 +137,8 @@ def test_reminder_timing(cfg, monkeypatch, capsys, tmp_path):
     assert "PPI" not in out                      # 3 days out: nothing yet
 
 
-def test_dot_plot_fomc_and_typical_move():
-    from screener.events import typical_move
+def test_dot_plot_fomc_and_up_down():
+    from screener.events import up_down
 
     when = datetime(2026, 12, 9, 19, tzinfo=timezone.utc)
     rows = merge_events([{"title": "Fed Interest Rate Decision", "when": when, "forecast": "", "previous": "", "country": "US"},
@@ -127,7 +146,7 @@ def test_dot_plot_fomc_and_typical_move():
                         {"FOMC": ["Fed Interest Rate Decision", "FOMC Economic Projections"]})
     assert [r["name"] for r in rows] == ["FOMC + dot plot"]
     d1, d2 = date(2026, 9, 16), date(2026, 10, 28)
-    closes = {d1 - timedelta(days=1): 100.0, d1: 103.0, d2 - timedelta(days=1): 100.0, d2: 99.0}
+    btc = {d1 - timedelta(days=1): _bar(d1, 100.0), d1: _bar(d1, 103.0), d2 - timedelta(days=1): _bar(d2, 100.0), d2: _bar(d2, 99.0)}
     times = ["2026-09-16T18:00:00+00:00", "2026-10-28T18:00:00+00:00"]
-    assert round(typical_move(times, closes, when, 9), 6) == 2.0  # average of +3% and -1%, ignoring direction
-    assert typical_move([], closes, when, 9) is None
+    assert up_down(times, btc, when, 9) == (1, 1)
+    assert up_down([], btc, when, 9) == (0, 0)

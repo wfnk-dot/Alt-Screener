@@ -128,17 +128,17 @@ def mega_earnings(http, url, day, companies):
 
 
 def btc_daily(http, cfg):
-    """BTC daily closes {UTC date: close}: Binance, else Hyperliquid."""
+    """BTC daily candles {UTC date: Bar}: Binance, else Hyperliquid."""
     try:
         bars = binance_web_klines(http, cfg["alerts"]["binance_web_url"], cfg["btc"]["binance_symbol"], "1d", pages=2)
         if bars:
-            return {b.day: b.close for b in bars}
+            return {b.day: b for b in bars}
     except Exception as e:  # noqa: BLE001
         log.warning("Binance BTC candles failed, using Hyperliquid: %s", e)
     now_ms = int(time.time() * 1000)
     bars = hyperliquid_candles(http, cfg["data"]["hyperliquid_url"], cfg["btc"]["hyperliquid_coin"],
                                now_ms - 3000 * 86_400_000, now_ms, "1d")
-    return {b.day: b.close for b in bars}
+    return {b.day: b for b in bars}
 
 
 # ---------------------------------------------------------------- grouping and history
@@ -186,22 +186,41 @@ def update_history(history, events, fomc, now, groups):
     return history
 
 
-def typical_move(times, closes, before, count):
-    """Average size (up or down) of BTC's move on the day, over the last `count` times before `before`."""
+def up_down(times, btc, before, count):
+    """(up days, down days) for BTC on the day, over the last `count` times before `before`."""
     past = [datetime.fromisoformat(x) for x in times if datetime.fromisoformat(x) < before][-count:]
-    moves = [abs(m) for m in (reaction(closes, t)[0] for t in past) if m is not None]
-    return sum(moves) / len(moves) if moves else None
+    moves = [m for m in (reaction(btc, t)[0] for t in past) if m is not None]
+    return sum(1 for m in moves if m > 0), sum(1 for m in moves if m < 0)
 
 
-def reaction(closes, when):
+def reaction(btc, when):
     """BTC % move: on the day, 3 days and 7 days later, each vs the close the day before. None if not yet."""
     d = when.date()
-    base = closes.get(d - timedelta(days=1))
-    if not base:
+    base = btc.get(d - timedelta(days=1))
+    if not base or not base.close:
         return None, None, None
-    pct = [None if closes.get(d + timedelta(days=k)) is None else (closes[d + timedelta(days=k)] / base - 1) * 100
+    pct = [None if btc.get(d + timedelta(days=k)) is None else (btc[d + timedelta(days=k)].close / base.close - 1) * 100
            for k in (0, 3, 7)]
     return tuple(pct)
+
+
+def _range_pct(btc, day):
+    """High-to-low range of that day (wicks included), as % of the close before."""
+    bar, prev = btc.get(day), btc.get(day - timedelta(days=1))
+    if not bar or not prev or not prev.close:
+        return None
+    return (bar.high - bar.low) / prev.close * 100
+
+
+def day_range(btc, when, days_before=5):
+    """(event day's range %, that range ÷ the average range of the `days_before` days before it)."""
+    d = when.date()
+    rng = _range_pct(btc, d)
+    before = [r for r in (_range_pct(btc, d - timedelta(days=k)) for k in range(1, days_before + 1)) if r is not None]
+    if rng is None or not before:
+        return rng, None
+    normal = sum(before) / len(before)
+    return rng, (rng / normal if normal else None)
 
 
 # ---------------------------------------------------------------- pictures and text
@@ -213,7 +232,7 @@ def _pct(v):
     return (f"{v:+.1f}%", GREEN if v > 0 else RED if v < 0 else TEXT)
 
 
-def outlook_cards(macro, earnings, history, closes, cfg, tz, monday, start=None):
+def outlook_cards(macro, earnings, history, btc, cfg, tz, monday, start=None):
     ev = cfg["events"]
     rows = []
     items = [(e["when"], e) for e in macro] + [(e["when"] or datetime.combine(e["day"], datetime.min.time(), timezone.utc), e)
@@ -221,7 +240,7 @@ def outlook_cards(macro, earnings, history, closes, cfg, tz, monday, start=None)
     for when, e in sorted(items, key=lambda x: x[0]):
         local = when.astimezone(tz)
         macro_row = "group" in e
-        typical = typical_move(history.get(e["group"]) or [], closes, when, ev["history_count"]) if macro_row else None
+        ups, downs = up_down(history.get(e["group"]) or [], btc, when, ev["history_count"]) if macro_row else (0, 0)
         rows.append([
             (f"{local:%a} {local.day} {local:%b}", TEXT),
             (f"{local:%H:%M}" if (macro_row or e["when"]) else "TBC", TEXT),
@@ -229,17 +248,17 @@ def outlook_cards(macro, earnings, history, closes, cfg, tz, monday, start=None)
             ("pill", "Macro", RED) if macro_row else ("pill", "Earnings", AMBER),
             (e["forecast"] or "–", TEXT),
             (e["previous"] or "–", MUTED),
-            (f"±{typical:.1f}%", TEXT) if typical is not None else ("–", MUTED),
+            (f"{ups} up · {downs} down", TEXT) if ups + downs else ("–", MUTED),
         ])
     cols = [("Day", "", "left", True), ("Time", "UK", "left", False), ("Event", "", "left", True),
             ("Type", "", "center", False), ("Forecast", "", "right", False), ("Previous", "", "right", False),
-            ("Typical BTC", "move on the day", "right", False)]
+            ("BTC on the day", f"last {ev['history_count']} times", "right", False)]
     sunday = monday + timedelta(days=6)
     first = start if start and start < monday else monday
     title = f"Week ahead · {first:%a} {week_label(first)} – Sun {week_label(sunday)}"
     footer = ["High-impact US news (TradingView economic calendar) and big-tech earnings. "
               "Earnings times are approximate (before the open / after the close).",
-              f"Typical BTC move = average size of BTC's move on the day, the last {ev['history_count']} times. "
+              "BTC on the day = how many times BTC closed up or down on that day. "
               "Dot plot = the Fed also publishes its rate forecasts. Reminders: 1 day, 1 hour and 15 minutes before."]
     if not rows:
         rows = [[("–", MUTED), ("", MUTED), ("Nothing big scheduled", TEXT), ("", MUTED), ("", MUTED), ("", MUTED), ("", MUTED)]]
@@ -251,27 +270,36 @@ def outlook_cards(macro, earnings, history, closes, cfg, tz, monday, start=None)
     for g in groups_this_week:
         past = [datetime.fromisoformat(x) for x in history.get(g, [])][-ev["history_count"]:]
         for t in reversed(past):
-            day, d3, d7 = reaction(closes, t)
+            day, d3, d7 = reaction(btc, t)
+            rng, ratio = day_range(btc, t, ev["range_days_before"])
             lt = t.astimezone(tz)
-            hist_rows.append([(g, TEXT), (f"{lt:%a} {lt.day} {lt:%b %Y}", MUTED), _pct(day), _pct(d3), _pct(d7)])
+            hist_rows.append([(g, TEXT), (f"{lt:%a} {lt.day} {lt:%b %Y}", MUTED), _pct(day),
+                              ("n/a", MUTED) if rng is None else (f"{rng:.1f}%", TEXT),
+                              ("n/a", MUTED) if ratio is None else (f"{ratio:.1f}x", AMBER if ratio >= ev["range_highlight"] else TEXT),
+                              _pct(d3), _pct(d7)])
         if not past:
-            hist_rows.append([(g, TEXT), ("history builds up from now", MUTED), ("", MUTED), ("", MUTED), ("", MUTED)])
+            hist_rows.append([(g, TEXT), ("history builds up from now", MUTED)] + [("", MUTED)] * 5)
     if hist_rows:
-        cards.append(render_card("How BTC reacted last times", "BTC move vs the close the day before",
+        cards.append(render_card("How BTC reacted last times", "Moves vs the close the day before",
                                  [("Event", "", "left", True), ("Date", "", "left", False), ("On the", "day", "right", False),
+                                  ("Day's", "range", "right", False), ("vs the", f"{ev['range_days_before']} days before", "right", False),
                                   ("After", "3 days", "right", False), ("After", "7 days", "right", False)],
-                                 hist_rows, ["Past dates: Federal Reserve (FOMC) and TradingView's economic calendar; new ones are added as they happen."]))
+                                 hist_rows,
+                                 [f"Day's range = high to low, wicks included. vs the {ev['range_days_before']} days before = that range "
+                                  f"divided by the average range of the {ev['range_days_before']} days before it (2.0x = twice as wild). "
+                                  f"Yellow = {ev['range_highlight']:g}x or more.",
+                                  "Past dates: Federal Reserve (FOMC) and TradingView's economic calendar; new ones are added as they happen."]))
     return cards
 
 
-def reminder_card(label, when, items, history, closes, tz):
+def reminder_card(label, when, items, history, btc, tz):
     rows = []
     for e in items:
         last = "–"
         if e.get("group") in history:
             past = [datetime.fromisoformat(x) for x in history[e["group"]] if datetime.fromisoformat(x) < when]
             if past:
-                moves = [reaction(closes, t)[0] for t in past[-3:]]
+                moves = [reaction(btc, t)[0] for t in past[-3:]]
                 last = "  ".join(f"{m:+.1f}%" for m in moves if m is not None) or "–"
         if "group" not in e:
             last = "–"
@@ -313,7 +341,7 @@ def run(cfg, mode, dry_run=False, now=None):
     except Exception as e:  # noqa: BLE001
         log.warning("Fed calendar unavailable: %s", e)
     history = update_history(history, raw, fomc, now, groups)
-    closes = btc_daily(http, cfg)
+    btc = btc_daily(http, cfg)
 
     # Earnings for the coming 7 days (state keeps what's already known, so reminders work all week)
     earnings = []
@@ -334,7 +362,7 @@ def run(cfg, mode, dry_run=False, now=None):
         week_macro = [e for e in macro if now <= e["when"] < week_end]
         week_earn = [e for e in earnings if now.astimezone(tz).date() <= e["day"] < week_end.date()
                      and (e["when"] is None or e["when"] >= now)]
-        cards = outlook_cards(week_macro, week_earn, history, closes, cfg, tz, monday, start=now.astimezone(tz).date())
+        cards = outlook_cards(week_macro, week_earn, history, btc, cfg, tz, monday, start=now.astimezone(tz).date())
         posts.append(("**Week ahead**", [("week_ahead.png", cards[0], "image/png")]))
         for i, c in enumerate(cards[1:], 1):
             posts.append((None, [(f"week_history_{i}.png", c, "image/png")]))  # own message, no ping
@@ -352,7 +380,7 @@ def run(cfg, mode, dry_run=False, now=None):
             if minutes >= 120:
                 if timedelta(hours=2) < lead <= timedelta(minutes=minutes):
                     items = [e for e in upcoming if e["when"] == when]
-                    posts.append(_reminder_post(label, when, items, history, closes, tz))
+                    posts.append(_reminder_post(label, when, items, history, btc, tz))
                     sent.add(key)
             elif lead <= timedelta(minutes=minutes) + timedelta(minutes=ev["reminder_wait_minutes"]):
                 later.append((when - timedelta(minutes=minutes), key, label, when))
@@ -368,7 +396,7 @@ def run(cfg, mode, dry_run=False, now=None):
             if not dry_run:
                 time.sleep(wait)
         items = [e for e in upcoming if e["when"] == when]
-        sent_now += _send([_reminder_post(label, when, items, history, closes, tz)], url, ev, dry_run)
+        sent_now += _send([_reminder_post(label, when, items, history, btc, tz)], url, ev, dry_run)
         sent.add(key)
         if not dry_run:
             state["sent"] = sorted(sent)
@@ -384,10 +412,10 @@ def _label(minutes):
     return f"In {minutes} minutes"
 
 
-def _reminder_post(label, when, items, history, closes, tz):
+def _reminder_post(label, when, items, history, btc, tz):
     names = ", ".join(dict.fromkeys(e["name"] if "group" in e else e["company"] + " earnings" for e in items))
     text = f"⏰ **{label}** · {names} at {when.astimezone(tz):%H:%M} UK"
-    return text, [("reminder.png", reminder_card(label, when, items, history, closes, tz), "image/png")]
+    return text, [("reminder.png", reminder_card(label, when, items, history, btc, tz), "image/png")]
 
 
 def _send(posts, url, ev, dry_run):
