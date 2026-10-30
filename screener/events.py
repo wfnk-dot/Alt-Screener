@@ -290,7 +290,7 @@ def outlook_cards(macro, earnings, history, btc, cfg, tz, monday, start=None):
             hist_rows.append([(g, TEXT), (f"{lt:%a} {lt.day} {lt:%b %Y}", MUTED),
                               (*_pct(day), band), (*_pct(d3), band), (*_pct(d7), band),
                               ("n/a", MUTED) if rng is None else (f"{rng:.1f}%", TEXT),
-                              ("–", MUTED) if ratio is None else (f"{ratio:.1f}x", AMBER if ratio >= ev["range_highlight"] else TEXT)])
+                              ("–", MUTED) if ratio is None else (f"{ratio:.1f}x", AMBER if round(ratio, 1) >= ev["range_highlight"] else TEXT)])
         if not past:
             hist_rows.append([(g, TEXT), ("history builds up from now", MUTED)] + [("", MUTED)] * 5)
     if hist_rows:
