@@ -32,8 +32,8 @@ from .universe import base_from_symbol, is_excluded, match_hyperliquid
 
 log = logging.getLogger("alerts")
 STATE = ROOT / "alerts_state.json"
-TF_LABEL = {"4h": "4h", "1d": "Daily", "3d": "3-day", "1w": "Weekly"}
-TF_HOURS = {"4h": 4, "1d": 24, "3d": 72, "1w": 168}
+TF_LABEL = {"4h": "4h", "12h": "12h", "1d": "Daily", "3d": "3-day", "1w": "Weekly"}
+TF_HOURS = {"4h": 4, "12h": 12, "1d": 24, "3d": 72, "1w": 168}
 
 
 def leledc(bars, count=10, length=40):
@@ -88,11 +88,13 @@ def candle_start(b):
     return datetime(b.day.year, b.day.month, b.day.day, tzinfo=timezone.utc)
 
 
-def closed_series(daily, h4, now):
+def closed_series(daily, h4, now, h12=()):
     """{timeframe: closed candles} built from Hyperliquid daily and 4h candles."""
     days = [b for b in daily if candle_start(b) + timedelta(days=1) <= now]
     weeks = [w for w in to_weekly(days) if candle_start(w) + timedelta(days=7) <= now]
-    return {"4h": h4, "1d": days, "3d": to_3day(days), "1w": weeks}
+    h12 = [b for b in h12 if candle_start(b) + timedelta(hours=12) <= now]
+    return {"4h": [b for b in h4 if candle_start(b) + timedelta(hours=4) <= now], "12h": h12,
+            "1d": days, "3d": to_3day(days), "1w": weeks}
 
 
 def new_signals(series, last_seen, cfg, now):
@@ -120,7 +122,7 @@ def new_signals(series, last_seen, cfg, now):
     return found, seen
 
 
-TF_ORDER = {"1w": 0, "3d": 1, "1d": 2, "4h": 3}
+TF_ORDER = {"1w": 0, "3d": 1, "1d": 2, "12h": 3, "4h": 4}
 
 
 def alert_records(coin, found, series, price_now, ind):
@@ -170,7 +172,7 @@ def alert_card(records, tz, now, source="Binance futures"):
             ("n/a", MUTED) if dist is None else (f"{dist:+.1f}%", GREEN if dist > 0 else RED if dist < 0 else TEXT),
             ("pill", {1: "Green", -1: "Red"}.get(r["bands"], "n/a"),
              {1: GREEN, -1: RED}.get(r["bands"], TREND_COLOURS["Range"])),
-            (closed.strftime("%a %d %b %H:%M") if r["tf"] == "4h" else closed.strftime("%a %d %b"), MUTED),
+            (closed.strftime("%a %d %b %H:%M") if r["tf"] in ("4h", "12h") else closed.strftime("%a %d %b"), MUTED),
         ])
     n = len(records)
     footer = [
@@ -260,18 +262,20 @@ def run(cfg, dry_run=False, now=None):
     need_daily = any(tf in due for tf in ("1d", "3d", "1w"))
     daily = parallel_map(lambda c: fetch(c, "1d", 4900), coins, 4) if need_daily else {}
     h4 = parallel_map(lambda c: fetch(c, "4h", 800), coins, 4) if "4h" in due else {}
+    h12 = parallel_map(lambda c: fetch(c, "12h", 2000), coins, 4) if "12h" in due else {}
 
     records, failed = [], []
     for coin in coins:
         base, name, _ = coin
-        if (need_daily and daily.get(coin) is None) or ("4h" in due and h4.get(coin) is None):
+        if ((need_daily and daily.get(coin) is None) or ("4h" in due and h4.get(coin) is None)
+                or ("12h" in due and h12.get(coin) is None)):
             failed.append(base)
             continue
-        series = closed_series(daily.get(coin) or [], h4.get(coin) or [], now)
+        series = closed_series(daily.get(coin) or [], h4.get(coin) or [], now, h12.get(coin) or [])
         series = {tf: bars for tf, bars in series.items() if tf in due}
         found, seen = new_signals(series, state.get(name, {}), cfg, now)
         state[name] = {**state.get(name, {}), **seen}
-        raw = daily.get(coin) or h4.get(coin) or []
+        raw = daily.get(coin) or h4.get(coin) or h12.get(coin) or []
         records += alert_records(base, found, series, raw[-1].close if raw else None, cfg["indicators"])
     for tf in due:
         state.setdefault("_checked", {})[tf] = _last_close(tf, now).isoformat()
@@ -305,8 +309,9 @@ def run(cfg, dry_run=False, now=None):
 def _last_close(tf, now):
     """Close time of the most recent candle of this timeframe that has closed by `now` (UTC)."""
     midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    if tf == "4h":
-        return now.replace(hour=now.hour - now.hour % 4, minute=0, second=0, microsecond=0)
+    if tf in ("4h", "12h"):
+        step = 4 if tf == "4h" else 12
+        return now.replace(hour=now.hour - now.hour % step, minute=0, second=0, microsecond=0)
     if tf == "1d":
         return midnight
     if tf == "3d":

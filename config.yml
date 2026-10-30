@@ -199,8 +199,8 @@ universe:
 #  Checked every hour; an alert only goes out once the candle has CLOSED.
 # ---------------------------------------------------------------------
 alerts:
-  # Timeframes to watch: 4h, 1d (daily), 3d (3-day), 1w (weekly)
-  timeframes: [4h, 1d, 3d, 1w]
+  # Timeframes to watch: 4h, 12h, 1d (daily), 3d (3-day), 1w (weekly)
+  timeframes: [4h, 12h, 1d, 3d, 1w]
   # How many coins: the top N by Hyperliquid 24h volume
   top_n: 50
   # Skip these groups from the exclude lists under "universe" (core coins are NOT skipped)

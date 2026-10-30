@@ -84,8 +84,8 @@ You get a new list with a **CORE** section (BTC, ETH, SOL, HYPE, gold) and an **
 
 ## 5. Dorito alerts (separate channel)
 
-The alerts check the top 50 coins every hour for Leledc exhaustion Doritos on the **4h, daily, 3-day and
-weekly**. An alert only goes out once the candle has **closed** with the Dorito, so ones that appear
+The alerts check the top 50 coins every 15 minutes for Leledc exhaustion Doritos on the **4h, 12h, daily, 3-day
+and weekly**. An alert only goes out once the candle has **closed** with the Dorito, so ones that appear
 mid-candle and then disappear never alert. They post to their own channel.
 
 1. In Discord, make a webhook in the alerts channel, the same way as step 1 (⚙️ → Integrations →
@@ -94,7 +94,8 @@ mid-candle and then disappear never alert. They post to their own channel.
 3. **Name:** `DISCORD_ALERTS_WEBHOOK_URL` · **Secret:** paste the new link → **Add secret**.
 4. Test it: **Actions** → **Dorito Alerts** → **Run workflow**.
 
-Alerts arrive within about an hour of the candle closing (GitHub's timer runs every hour, sometimes late).
+Alerts usually arrive 5-20 minutes after the candle closes (GitHub's timer is sometimes late or skips a run;
+the next one catches up).
 Settings are under `alerts:` in `config.yml` (timeframes, how many coins, the indicator's two numbers, ping).
 If the alerts ever stop working, GitHub emails you about the failed run.
 

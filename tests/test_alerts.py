@@ -106,3 +106,19 @@ def test_alert_card_and_text():
     img = Image.open(io.BytesIO(alert_card(recs, ZoneInfo("Europe/London"), now)))
     assert img.format == "PNG" and img.width > 600
     assert alert_text(recs, "@here") == "@here\n**Dorito alerts** · Daily: ENA ▲ · 4h: ZEC ▼"
+
+
+def test_12h_close_times():
+    assert _last_close("12h", datetime(2026, 10, 30, 7, 3, tzinfo=timezone.utc)) == datetime(2026, 10, 30, 0, tzinfo=timezone.utc)
+    assert _last_close("12h", datetime(2026, 10, 30, 13, 3, tzinfo=timezone.utc)) == datetime(2026, 10, 30, 12, tzinfo=timezone.utc)
+
+
+def test_forming_intraday_candles_are_dropped():
+    """Binance's live 4h/12h lists end with the candle still forming: it must never be checked."""
+    now = datetime(2026, 10, 30, 7, 3, tzinfo=timezone.utc)
+    h4 = [Bar(datetime(2026, 10, 30, h, tzinfo=timezone.utc), 1, 1, 1, 1, 1) for h in (0, 4)]       # 04:00 still forming
+    h12 = [Bar(datetime(2026, 10, 29, h, tzinfo=timezone.utc), 1, 1, 1, 1, 1) for h in (0, 12)] + \
+          [Bar(datetime(2026, 10, 30, 0, tzinfo=timezone.utc), 1, 1, 1, 1, 1)]                       # 00:00 still forming
+    s = closed_series([], h4, now, h12)
+    assert [b.day.hour for b in s["4h"]] == [0]
+    assert [b.day for b in s["12h"]][-1] == datetime(2026, 10, 29, 12, tzinfo=timezone.utc)

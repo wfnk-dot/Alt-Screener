@@ -3,7 +3,7 @@ name: Catalysts
 on:
   # Every hour: week-ahead post on Sunday, and reminders before each event.
   schedule:
-    - cron: "1 * * * *"
+    - cron: "1,16,31,46 * * * *"
   workflow_dispatch:
     inputs:
       outlook:

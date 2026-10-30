@@ -1,9 +1,10 @@
 name: Dorito Alerts
 
 on:
-  # Every hour, just after candles close. Each timeframe is only checked when a new candle has closed.
+  # Every 15 minutes (GitHub skips some scheduled runs when it's busy). Each timeframe is only
+  # checked once a new candle has closed, so most runs finish in seconds.
   schedule:
-    - cron: "3 * * * *"
+    - cron: "3,18,33,48 * * * *"
   workflow_dispatch:
     inputs:
       dry_run:

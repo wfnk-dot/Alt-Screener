@@ -4,7 +4,7 @@ on:
   # GitHub's timer only understands UTC and is often late, so this wakes every
   # hour and the "Check the clock" step compares UK time with config.yml.
   schedule:
-    - cron: "7 * * * *"
+    - cron: "7,37 * * * *"
   # The "Run workflow" button on the Actions tab
   workflow_dispatch:
     inputs:
