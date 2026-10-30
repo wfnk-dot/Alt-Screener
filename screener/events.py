@@ -223,7 +223,7 @@ def outlook_cards(macro, earnings, history, closes, cfg, tz, monday, start=None)
             ("pill", "Macro", RED) if macro_row else ("pill", "Earnings", AMBER),
             (e["forecast"] or "–", TEXT),
             (e["previous"] or "–", MUTED),
-            _pct(last) if macro_row else ("–", MUTED),
+            _pct(last) if macro_row and last is not None else ("–", MUTED),
         ])
     cols = [("Day", "", "left", True), ("Time", "UK", "left", False), ("Event", "", "left", True),
             ("Type", "", "center", False), ("Forecast", "", "right", False), ("Previous", "", "right", False),
@@ -245,7 +245,8 @@ def outlook_cards(macro, earnings, history, closes, cfg, tz, monday, start=None)
         past = [datetime.fromisoformat(x) for x in history.get(g, [])][-ev["history_count"]:]
         for t in reversed(past):
             day, d3, d7 = reaction(closes, t)
-            hist_rows.append([(g, TEXT), (f"{t.astimezone(tz):%a %d %b %Y}", MUTED), _pct(day), _pct(d3), _pct(d7)])
+            lt = t.astimezone(tz)
+            hist_rows.append([(g, TEXT), (f"{lt:%a} {lt.day} {lt:%b %Y}", MUTED), _pct(day), _pct(d3), _pct(d7)])
         if not past:
             hist_rows.append([(g, TEXT), ("history builds up from now", MUTED), ("", MUTED), ("", MUTED), ("", MUTED)])
     if hist_rows:
@@ -259,12 +260,12 @@ def outlook_cards(macro, earnings, history, closes, cfg, tz, monday, start=None)
 def reminder_card(label, when, items, history, closes, tz):
     rows = []
     for e in items:
-        last = "n/a"
+        last = "–"
         if e.get("group") in history:
             past = [datetime.fromisoformat(x) for x in history[e["group"]] if datetime.fromisoformat(x) < when]
             if past:
                 moves = [reaction(closes, t)[0] for t in past[-3:]]
-                last = "  ".join(f"{m:+.1f}%" for m in moves if m is not None) or "n/a"
+                last = "  ".join(f"{m:+.1f}%" for m in moves if m is not None) or "–"
         if "group" not in e:
             last = "–"
         rows.append([(e["name"] if "group" in e else f"{e['company']} · {e['slot']}", TEXT),
