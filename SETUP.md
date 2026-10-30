@@ -112,8 +112,8 @@ Try it by hand: **Actions** → **Alt Screener** → **Run workflow** → tick *
 
 ## 7. Catalysts channel (news, FOMC, CPI, earnings)
 
-- **Sunday 17:30 UK:** the week ahead: red-folder USD news from Forex Factory (FOMC, CPI, jobs, PCE…) and
-  earnings from companies worth $500B+, plus how BTC moved the last few times each big event happened.
+- **Sunday 17:30 UK:** the week ahead: high-impact US news (FOMC, CPI, jobs, PCE, PPI, retail sales, GDP,
+  ISM, Fed Chair/President speeches) and big-tech earnings (Nvidia, Apple, Microsoft, Google, Amazon, Meta, Tesla, Broadcom, AMD), plus how BTC moved the last few times each big event happened.
 - **Reminders:** 1 day, 1 hour and 15 minutes before each event.
 
 Set up (same as the Doritos one, a webhook for the news channel):
@@ -122,8 +122,7 @@ Set up (same as the Doritos one, a webhook for the news channel):
 3. **Name:** `DISCORD_NEWS_WEBHOOK_URL` · **Secret:** paste the link → **Add secret**.
 4. Test it: **Actions** → **Catalysts** → **Run workflow** (it posts the week ahead straight away).
 
-Settings are under `events:` in `config.yml` (post time, reminder times, which news, the earnings size cut-off,
-companies to always include).
+Settings are under `events:` in `config.yml` (post time, reminder times, which news, which companies' earnings).
 
 ---
 

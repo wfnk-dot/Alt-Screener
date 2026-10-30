@@ -226,30 +226,59 @@ events:
   reminders_minutes: [1440, 60, 15]
   # Who to ping: "@here", "@everyone", or "" for none
   ping: "@here"
-  # Which news: Forex Factory currencies and impact ("High" = red folder)
-  countries: [USD]
-  impacts: [High]
-  # Earnings: only companies worth at least this many dollars (500000000000 = $500B, the S&P giants)
-  earnings_min_market_cap: 500000000000
-  # Earnings to always include whatever their size, e.g. [COIN, MSTR]
-  earnings_always: []
-  # Event names that count as the same thing (Forex Factory titles). These are merged into one row,
-  # and their BTC reaction history is tracked.
+  # Which news: high-importance US events from TradingView's economic calendar whose name contains
+  # one of these (anything else, like housing data, is left out)
+  include:
+    - Fed Interest Rate Decision
+    - Fed Press Conference
+    - FOMC Minutes
+    - Inflation Rate MoM
+    - Non Farm Payrolls
+    - Core PCE Price Index MoM
+    - PPI MoM
+    - Retail Sales MoM
+    - GDP Growth Rate
+    - ISM Manufacturing PMI
+    - ISM Services PMI
+    - JOLTs Job Openings
+    - Fed Chair
+    - President Trump
+  # ...but never these
+  skip: [Annual Revision]
+  # Earnings: only these companies (ticker: name). Add e.g. COIN: Coinbase, MSTR: Strategy
+  earnings_companies:
+    NVDA: Nvidia
+    AAPL: Apple
+    MSFT: Microsoft
+    GOOGL: Alphabet (Google)
+    AMZN: Amazon
+    META: Meta
+    TSLA: Tesla
+    AVGO: Broadcom
+    AMD: AMD
+  # Event names that count as the same thing. They're merged into one row and their BTC reaction
+  # history is tracked. (Names from TradingView and, as backup, Forex Factory.)
   groups:
-    FOMC: ["Federal Funds Rate", "FOMC Statement", "FOMC Press Conference"]
-    CPI: ["CPI m/m", "Core CPI m/m", "CPI y/y"]
-    Jobs report (NFP): ["Non-Farm Employment Change", "Unemployment Rate", "Average Hourly Earnings m/m"]
-    PCE: ["Core PCE Price Index m/m", "PCE Price Index m/m"]
-    GDP: ["Advance GDP q/q", "Prelim GDP q/q", "Final GDP q/q"]
-    PPI: ["PPI m/m", "Core PPI m/m"]
-    Retail sales: ["Retail Sales m/m", "Core Retail Sales m/m"]
+    FOMC: ["Fed Interest Rate Decision", "Fed Press Conference", "FOMC Statement",
+           "Federal Funds Rate", "FOMC Press Conference"]
+    CPI: ["Inflation Rate MoM", "Core Inflation Rate MoM", "CPI m/m", "Core CPI m/m", "CPI y/y"]
+    Jobs report (NFP): ["Non Farm Payrolls", "Non-Farm Employment Change", "Unemployment Rate"]
+    PCE: ["Core PCE Price Index MoM", "Core PCE Price Index m/m"]
+    GDP: ["GDP Growth Rate QoQ Adv", "GDP Growth Rate QoQ 2nd Est", "GDP Growth Rate QoQ Final",
+          "GDP Growth Rate QoQ", "Advance GDP q/q", "Prelim GDP q/q", "Final GDP q/q"]
+    PPI: ["PPI MoM", "PPI m/m", "Core PPI m/m"]
+    Retail sales: ["Retail Sales MoM", "Retail Sales m/m", "Core Retail Sales m/m"]
   # Which of those get the "How BTC reacted last times" table, and how many past times to show.
   # Past dates are in events_history.json (a year of them was filled in from TradingView's
   # economic calendar); new ones are added automatically as they happen.
   history_groups: [FOMC, CPI, Jobs report (NFP), PCE, PPI, Retail sales, GDP]
   history_count: 9
-  # Sources (normally no need to change)
+  # Sources (normally no need to change). Forex Factory is the backup if TradingView fails.
+  tv_calendar_url: https://economic-calendar.tradingview.com/events
+  tv_countries: [US]
   calendar_url: https://nfs.faireconomy.media/ff_calendar_thisweek.json
+  countries: [USD]
+  impacts: [High]
   fomc_calendar_url: https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm
   earnings_url: https://api.nasdaq.com/api/calendar/earnings
   # The 1-hour and 15-minute reminders: a run this many minutes early waits for the right moment

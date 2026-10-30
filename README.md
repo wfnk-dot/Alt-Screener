@@ -12,7 +12,7 @@ It also sends **Dorito alerts** (Leledc exhaustion, confirmed on candle close) f
 4h, daily, 3-day and weekly to a separate Discord channel.
 
 Mid-week (Wednesday by default) it pings the watchlist channel if a coin has jumped into the top 10.
-A **catalysts** channel gets the week ahead every Sunday (red-folder USD news, $500B+ earnings, how BTC
+A **catalysts** channel gets the week ahead every Sunday (high-impact US news, big-tech earnings, how BTC
 reacted to past FOMC/CPI) and reminders 1 day, 1 hour and 15 minutes before each event.
 
 Runs free on GitHub Actions. No AI, no paid services, no keys except the Discord webhook (a GitHub secret).

@@ -53,6 +53,32 @@ def ff_events(http, url, countries, impacts):
     return out
 
 
+def tv_events(http, url, start, end, countries, include, skip):
+    """TradingView's economic calendar (has future AND past releases): high-importance events whose title
+    contains one of `include` (and none of `skip`). Same shape as ff_events."""
+    r = http.request("GET", url, headers={**BROWSER, "Origin": "https://www.tradingview.com"},
+                     params={"from": start.strftime("%Y-%m-%dT%H:%M:%S.000Z"), "to": end.strftime("%Y-%m-%dT%H:%M:%S.000Z"),
+                             "countries": ",".join(countries), "minImportance": 1}).json()
+    out = []
+    for e in r.get("result") or []:
+        title = e.get("title", "")
+        if not any(w.lower() in title.lower() for w in include) or any(w.lower() in title.lower() for w in skip):
+            continue
+        try:
+            when = datetime.fromisoformat(e["date"].replace("Z", "+00:00"))
+        except (KeyError, ValueError):
+            continue
+
+        def fmt(v):
+            if v is None:
+                return ""
+            return f"{v:g}{e.get('unit') or ''}{e.get('scale') or ''}"
+
+        out.append({"title": title, "when": when, "forecast": fmt(e.get("forecast")), "previous": fmt(e.get("previous")),
+                    "country": e.get("country", "")})
+    return out
+
+
 def fomc_decisions(html):
     """FOMC rate-decision times (UTC) from the Fed's calendar page: 2pm New York on the meeting's last day."""
     out = []
@@ -80,17 +106,13 @@ def fomc_decisions(html):
     return sorted(set(out))
 
 
-def mega_earnings(http, url, day, min_cap, extra):
-    """Earnings on `day` for companies worth at least `min_cap` dollars (or listed in `extra`)."""
+def mega_earnings(http, url, day, companies):
+    """Earnings on `day` for the companies in `companies` ({ticker: name})."""
     r = http.request("GET", url, params={"date": day.isoformat()}, headers=BROWSER).json()
     rows = ((r or {}).get("data") or {}).get("rows") or []
     out = []
     for row in rows:
-        try:
-            cap = float(str(row.get("marketCap", "")).replace("$", "").replace(",", "") or 0)
-        except ValueError:
-            cap = 0
-        if cap < min_cap and row.get("symbol") not in extra:
+        if row.get("symbol") not in companies:
             continue
         slot = row.get("time", "")
         if "pre" in slot:
@@ -99,8 +121,8 @@ def mega_earnings(http, url, day, min_cap, extra):
             when, label = datetime(day.year, day.month, day.day, 16, 5, tzinfo=ET), "after the close"
         else:
             when, label = None, "time not set"
-        out.append({"title": f"{row['symbol']} earnings", "company": row.get("name", ""), "symbol": row["symbol"],
-                    "cap": cap, "when": when.astimezone(timezone.utc) if when else None, "day": day,
+        out.append({"title": f"{row['symbol']} earnings", "company": companies[row["symbol"]], "symbol": row["symbol"],
+                    "when": when.astimezone(timezone.utc) if when else None, "day": day,
                     "slot": label, "forecast": row.get("epsForecast", ""), "previous": row.get("lastYearEPS", "")})
     return out
 
@@ -197,11 +219,11 @@ def outlook_cards(macro, earnings, history, closes, cfg, tz, monday, start=None)
         rows.append([
             (f"{local:%a} {local.day} {local:%b}", TEXT),
             (f"{local:%H:%M}" if (macro_row or e["when"]) else "TBC", TEXT),
-            (e["name"] if macro_row else f"{e['symbol']} · {e['slot']}", TEXT),
+            (e["name"] if macro_row else f"{e['company']} · {e['slot']}", TEXT),
             ("pill", "Macro", RED) if macro_row else ("pill", "Earnings", AMBER),
             (e["forecast"] or "–", TEXT),
             (e["previous"] or "–", MUTED),
-            _pct(last) if macro_row else ("", MUTED),
+            _pct(last) if macro_row else ("–", MUTED),
         ])
     cols = [("Day", "", "left", True), ("Time", "UK", "left", False), ("Event", "", "left", True),
             ("Type", "", "center", False), ("Forecast", "", "right", False), ("Previous", "", "right", False),
@@ -209,8 +231,8 @@ def outlook_cards(macro, earnings, history, closes, cfg, tz, monday, start=None)
     sunday = monday + timedelta(days=6)
     first = start if start and start < monday else monday
     title = f"Week ahead · {first:%a} {week_label(first)} – Sun {week_label(sunday)}"
-    footer = ["Red-impact USD news (Forex Factory) and earnings from companies worth "
-              f"${ev['earnings_min_market_cap'] / 1e9:,.0f}B+. Earnings times are approximate (before the open / after the close).",
+    footer = ["High-impact US news (TradingView economic calendar) and big-tech earnings. "
+              "Earnings times are approximate (before the open / after the close).",
               "BTC last time = BTC's move on the day this event last happened. Reminders: 1 day, 1 hour and 15 minutes before."]
     if not rows:
         rows = [[("–", MUTED), ("", MUTED), ("Nothing big scheduled", TEXT), ("", MUTED), ("", MUTED), ("", MUTED), ("", MUTED)]]
@@ -243,7 +265,9 @@ def reminder_card(label, when, items, history, closes, tz):
             if past:
                 moves = [reaction(closes, t)[0] for t in past[-3:]]
                 last = "  ".join(f"{m:+.1f}%" for m in moves if m is not None) or "n/a"
-        rows.append([(e["name"] if "group" in e else f"{e['symbol']} · {e['slot']}", TEXT),
+        if "group" not in e:
+            last = "–"
+        rows.append([(e["name"] if "group" in e else f"{e['company']} · {e['slot']}", TEXT),
                      ("pill", "Macro", RED) if "group" in e else ("pill", "Earnings", AMBER),
                      (e.get("forecast") or "–", TEXT), (e.get("previous") or "–", MUTED), (last, MUTED)])
     cols = [("Event", "", "left", True), ("Type", "", "center", False), ("Forecast", "", "right", False),
@@ -267,7 +291,12 @@ def run(cfg, mode, dry_run=False, now=None):
         log.warning("DISCORD_NEWS_WEBHOOK_URL secret is not set yet (see SETUP.md), so nothing to do")
         return 0
 
-    raw = ff_events(http, ev["calendar_url"], ev["countries"], ev["impacts"])
+    try:
+        raw = tv_events(http, ev["tv_calendar_url"], now - timedelta(days=8), now + timedelta(days=9),
+                        ev["tv_countries"], ev["include"], ev.get("skip") or [])
+    except Exception as e:  # noqa: BLE001
+        log.warning("TradingView calendar failed, using Forex Factory (this week only): %s", e)
+        raw = ff_events(http, ev["calendar_url"], ev["countries"], ev["impacts"])
     groups = ev["groups"]
     macro = merge_events(raw, groups)
     fomc = []
@@ -285,8 +314,7 @@ def run(cfg, mode, dry_run=False, now=None):
         if day.weekday() >= 5:
             continue
         try:
-            earnings += mega_earnings(http, ev["earnings_url"], day, ev["earnings_min_market_cap"],
-                                      set(ev.get("earnings_always") or []))
+            earnings += mega_earnings(http, ev["earnings_url"], day, ev["earnings_companies"])
         except Exception as e:  # noqa: BLE001
             log.warning("Earnings calendar failed for %s: %s", day, e)
 
@@ -299,7 +327,7 @@ def run(cfg, mode, dry_run=False, now=None):
         week_earn = [e for e in earnings if now.astimezone(tz).date() <= e["day"] < week_end.date()
                      and (e["when"] is None or e["when"] >= now)]
         cards = outlook_cards(week_macro, week_earn, history, closes, cfg, tz, monday, start=now.astimezone(tz).date())
-        names = [e["name"] for e in week_macro] + [e["symbol"] for e in week_earn]
+        names = [e["name"] for e in week_macro] + [e["company"] for e in week_earn]
         text = f"**Week ahead** · {', '.join(dict.fromkeys(names)) or 'nothing big scheduled'}"
         posts.append((text, [(f"week_{i}.png", c, "image/png") for i, c in enumerate(cards)]))
         state["last_outlook"] = now.isoformat()
@@ -349,7 +377,7 @@ def _label(minutes):
 
 
 def _reminder_post(label, when, items, history, closes, tz):
-    names = ", ".join(dict.fromkeys(e["name"] if "group" in e else e["symbol"] + " earnings" for e in items))
+    names = ", ".join(dict.fromkeys(e["name"] if "group" in e else e["company"] + " earnings" for e in items))
     text = f"⏰ **{label}** · {names} at {when.astimezone(tz):%H:%M} UK"
     return text, [("reminder.png", reminder_card(label, when, items, history, closes, tz), "image/png")]
 

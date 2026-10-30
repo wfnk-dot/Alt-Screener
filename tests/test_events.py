@@ -39,16 +39,34 @@ def test_fomc_dates_from_fed_page():
     assert jan.hour == 19  # 2pm New York in winter = 19:00 UTC
 
 
-def test_mega_cap_earnings_only():
+def test_big_tech_earnings_only():
     payload = json.loads((DATA / "nasdaq_earnings_2026-10-29.json").read_text())
+    companies = {"AMZN": "Amazon", "AAPL": "Apple"}
     rows = mega_earnings(FakeHttp({"nasdaq": FakeResponse(payload=payload)}), "https://api.nasdaq.com/x",
-                         date(2026, 10, 29), 500e9, set())
-    assert {r["symbol"] for r in rows} == {"AMZN", "LLY", "MA", "INTC"}
-    amzn = next(r for r in rows if r["symbol"] == "AMZN")
-    assert amzn["slot"] == "after the close" and amzn["when"] == datetime(2026, 10, 29, 20, 5, tzinfo=timezone.utc)
-    always = mega_earnings(FakeHttp({"nasdaq": FakeResponse(payload=payload)}), "https://api.nasdaq.com/x",
-                           date(2026, 10, 29), 500e9, {"CAT"})
-    assert "CAT" in {r["symbol"] for r in always}
+                         date(2026, 10, 29), companies)
+    assert [r["symbol"] for r in rows] == ["AMZN"]  # Exxon, AbbVie etc. are left out
+    amzn = rows[0]
+    assert amzn["company"] == "Amazon" and amzn["slot"] == "after the close"
+    assert amzn["when"] == datetime(2026, 10, 29, 20, 5, tzinfo=timezone.utc)
+
+
+def test_tradingview_calendar(cfg):
+    from screener.events import tv_events
+
+    payload = json.loads((DATA / "tv_calendar.json").read_text())
+    ev = cfg["events"]
+    rows = tv_events(FakeHttp({"tradingview": FakeResponse(payload=payload)}), "https://economic-calendar.tradingview.com/x",
+                     datetime(2026, 9, 25, tzinfo=timezone.utc), datetime(2026, 10, 30, tzinfo=timezone.utc),
+                     ["US"], ev["include"], ev["skip"])
+    titles = {r["title"] for r in rows}
+    assert {"Fed Interest Rate Decision", "Inflation Rate MoM", "Non Farm Payrolls"} <= titles
+    assert not any("Housing" in t or "Existing Home" in t for t in titles)  # not on the list
+    cpi = next(r for r in rows if r["title"] == "Inflation Rate MoM" and r["when"].date() == date(2026, 10, 14))
+    assert cpi["forecast"] == "0.6%" and cpi["previous"] == "0.4%"
+    nfp = next(r for r in rows if r["title"] == "Non Farm Payrolls" and r["when"].date() == date(2026, 10, 2))
+    assert nfp["forecast"] == "90K"
+    merged = merge_events(rows, ev["groups"])
+    assert sum(1 for m in merged if m["name"] == "FOMC" and m["when"].date() == date(2026, 10, 28)) == 1
 
 
 def test_btc_reaction():
