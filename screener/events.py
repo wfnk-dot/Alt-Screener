@@ -269,13 +269,11 @@ def outlook_cards(macro, earnings, history, btc, cfg, tz, monday, start=None):
     sunday = monday + timedelta(days=6)
     first = start if start and start < monday else monday
     title = f"Week ahead · {first:%a} {week_label(first)} – Sun {week_label(sunday)}"
-    footer = ["High-impact US news (TradingView economic calendar) and big-tech earnings. "
-              "Earnings times are approximate (before the open / after the close).",
-              "BTC on the day = how many times BTC closed up or down on that day. "
-              "Dot plot = the Fed also publishes its rate forecasts. Reminders: 1 day, 1 hour and 15 minutes before."]
+    footer = ["Times in UK time; earnings times are approximate. Dot plot = the Fed also publishes its rate forecasts. "
+              "Reminders 1 day, 1 hour and 15 min before."]
     if not rows:
         rows = [[("–", MUTED), ("", MUTED), ("Nothing big scheduled", TEXT), ("", MUTED), ("", MUTED), ("", MUTED), ("", MUTED)]]
-    cards = [render_card(title, "Times in UK time", cols, rows, footer)]
+    cards = [render_card(title, "", cols, rows, footer)]
 
     # How BTC reacted the last few times, for each tracked event happening this week
     groups_this_week = [g for g in ev["history_groups"] if any(e.get("group") == g for e in macro)]
@@ -294,16 +292,14 @@ def outlook_cards(macro, earnings, history, btc, cfg, tz, monday, start=None):
         if not past:
             hist_rows.append([(g, TEXT), ("history builds up from now", MUTED)] + [("", MUTED)] * 5)
     if hist_rows:
-        cards.append(render_card("How BTC reacted last times", "Moves vs the close the day before",
+        cards.append(render_card("How BTC reacted last times", "",
                                  [("Event", "", "left", True), ("Date", "", "left", False), ("On the", "day", "right", False),
                                   ("After", "3 days", "right", False), ("After", "7 days", "right", False),
                                   ("Day's", "range", "right", False), ("vs earlier", "that week", "right", False)],
                                  hist_rows,
-                                 ["Red / green shading = it kept falling / kept rising (day → 3 days → 7 days). "
-                                  "Day's range = high to low, wicks included.",
-                                  "vs earlier that week = that range divided by the average range of the weekdays before it in the same "
-                                  f"week (Wed is compared with Mon-Tue; 2.0x = twice as wild). Yellow = {ev['range_highlight']:g}x or more.",
-                                  "Past dates: Federal Reserve (FOMC) and TradingView's economic calendar; new ones are added as they happen."]))
+                                 ["Moves vs the close the day before. Red / green = kept falling / rising. "
+                                  "Range = high to low incl. wicks, vs the earlier weekdays that week "
+                                  f"(yellow = {ev['range_highlight']:g}x+)."]))
     return cards
 
 

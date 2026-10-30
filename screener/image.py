@@ -18,6 +18,19 @@ AMBER = (251, 191, 36)
 TREND_COLOURS = {"Up": GREEN, "Down": RED, "Range": (160, 166, 178), "n/a": (110, 115, 125)}
 
 
+def _wrap(text, font, width):
+    """Split text into lines that fit `width` pixels."""
+    lines, cur = [], ""
+    for word in text.split():
+        trial = f"{cur} {word}".strip()
+        if cur and font.getlength(trial) > width:
+            lines.append(cur)
+            cur = word
+        else:
+            cur = trial
+    return lines + ([cur] if cur else [])
+
+
 def tint(colour, strength=0.12):
     """A very faint version of `colour` over the card background (for shading cells)."""
     return tuple(int(BG[n] * (1 - strength) + colour[n] * strength) for n in range(3))
@@ -147,9 +160,14 @@ def render_card(title, subtitle, columns, rows, footer=()):
         col_w.append(int(w))
 
     table_w = sum(col_w) + gap * (len(columns) - 1)
-    lines_below = [x for x in footer if x]
-    total_w = max(table_w, int(max([title_font.getlength(title), _font("Regular", 14).getlength(subtitle or "")]
-                                   + [small.getlength(x) for x in lines_below]))) + 2 * pad
+    # The card is as wide as the table (or the title, if longer). Footer notes wrap to fit instead of
+    # stretching the card, and if the title is wider, the columns spread out to fill the space.
+    content_w = max(table_w, int(title_font.getlength(title)), int(_font("Regular", 14).getlength(subtitle or "")))
+    if content_w > table_w and len(columns) > 1:
+        gap += (content_w - table_w) / (len(columns) - 1)
+        table_w = content_w
+    lines_below = [line for text in footer if text for line in _wrap(text, small, content_w)]
+    total_w = content_w + 2 * pad
     title_h = (64 if subtitle else 40) * S
     head_h = 40 * S
     foot_h = (18 * S) * len(lines_below) + 12 * S
