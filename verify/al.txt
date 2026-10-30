@@ -1,0 +1,7 @@
+2026-10-30 07:04:22,436 INFO Checking 4h, 12h on 50 coins
+@here
+**Dorito alerts** · 12h: ZEC ▼, 1000PEPE ▼, ASTER ▼
+
+real	1m16.835s
+user	0m2.843s
+sys	0m0.157s
