@@ -1,0 +1,23 @@
+name: Verify (temporary)
+on:
+  push:
+    branches: [ci-verify]
+permissions:
+  contents: write
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      - run: |
+          mkdir -p verify
+          ( time python -m screener.alerts --dry-run ) > verify/al.txt 2>&1 || true
+          git config user.name "verify bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -f verify
+          git commit -m "verify results [skip ci]"
+          git push
