@@ -1,5 +1,6 @@
 import io
 import json
+import re
 from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
@@ -177,7 +178,7 @@ def test_role_ping(monkeypatch, tmp_path):
 
     text = DEFAULT_CONFIG.read_text()
     cfg_file = tmp_path / "config.yml"
-    cfg_file.write_text(text.replace('ping_role_id: ""', 'ping_role_id: "123456789012345678"'))
+    cfg_file.write_text(re.sub(r'(?m)^ping_role_id: .*$', 'ping_role_id: "123456789012345678"', text))
     cfg = load_config(cfg_file)
     assert cfg["discord"]["ping"] == cfg["alerts"]["ping"] == cfg["events"]["ping"] == "<@&123456789012345678>"
 

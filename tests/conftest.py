@@ -15,7 +15,11 @@ DATA = Path(__file__).parent / "data"
 
 @pytest.fixture
 def cfg():
-    return load_config()
+    c = load_config()
+    # Tests don't depend on whichever Discord role the live config pings
+    for section in ("discord", "alerts", "events"):
+        c[section]["ping"] = "@here"
+    return c
 
 
 def make_bars(closes, start=date(2025, 1, 6), wick=0.01):
