@@ -1,5 +1,6 @@
 """TradingView watchlist file, Discord post and the full report."""
 import json
+import re
 from datetime import timedelta
 
 import requests
@@ -83,9 +84,12 @@ def discord_message(top_coins, new, dropped, monday, cfg, btc_line="", notes=())
 
 def post_discord(webhook_url, content, attachments=(), ping=""):
     """attachments: list of (filename, bytes, content type)."""
-    # Discord only pings @here/@everyone if the post explicitly allows it
-    parse = ["everyone"] if ping in ("@here", "@everyone") else []
-    payload = {"content": content[:2000], "allowed_mentions": {"parse": parse}}
+    # Discord only pings @here/@everyone or a role if the post explicitly allows it
+    allowed = {"parse": ["everyone"] if ping in ("@here", "@everyone") else []}
+    role = re.fullmatch(r"<@&(\d+)>", ping or "")
+    if role:
+        allowed["roles"] = [role.group(1)]
+    payload = {"content": content[:2000], "allowed_mentions": allowed}
     files = {f"files[{i}]": a for i, a in enumerate(attachments)}
     r = requests.post(
         webhook_url + ("&" if "?" in webhook_url else "?") + "wait=true",

@@ -23,6 +23,14 @@ schedule:
   midweek_time: "18:00"
 
 # ---------------------------------------------------------------------
+#  Who gets pinged in every channel (watchlist, Doritos, catalysts)
+#  Paste your Discord role's ID between the quotes to ping that role instead of @here.
+#  (Discord: Settings > Advanced > Developer Mode on, then Server Settings > Roles >
+#   right-click the role > Copy Role ID.) Leave "" to use each channel's own "ping" below.
+# ---------------------------------------------------------------------
+ping_role_id: ""
+
+# ---------------------------------------------------------------------
 #  Discord post
 # ---------------------------------------------------------------------
 discord:

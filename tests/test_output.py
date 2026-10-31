@@ -168,3 +168,24 @@ def test_current_list():
     assert current_list(s, date(2026, 11, 4)) == ("2026-11-02", ["B", "C"])   # Wednesday of that week
     assert current_list(s, date(2026, 11, 12)) == ("2026-11-02", ["B", "C"])  # no list yet: latest
     assert current_list({"weeks": {}}, date(2026, 11, 4)) == ("2026-11-02", [])
+
+
+def test_role_ping(monkeypatch, tmp_path):
+    from screener.config import load_config
+
+    from screener.config import DEFAULT_CONFIG
+
+    text = DEFAULT_CONFIG.read_text()
+    cfg_file = tmp_path / "config.yml"
+    cfg_file.write_text(text.replace('ping_role_id: ""', 'ping_role_id: "123456789012345678"'))
+    cfg = load_config(cfg_file)
+    assert cfg["discord"]["ping"] == cfg["alerts"]["ping"] == cfg["events"]["ping"] == "<@&123456789012345678>"
+
+    sent = {}
+
+    class R:
+        status_code = 200
+
+    monkeypatch.setattr(output.requests, "post", lambda url, data, files, timeout: (sent.update(json.loads(data["payload_json"])), R())[1])
+    post_discord("https://discord/hook", "<@&123456789012345678> hi", [], ping="<@&123456789012345678>")
+    assert sent["allowed_mentions"] == {"parse": [], "roles": ["123456789012345678"]}
