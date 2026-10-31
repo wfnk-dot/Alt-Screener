@@ -28,7 +28,7 @@ schedule:
 #  (Discord: Settings > Advanced > Developer Mode on, then Server Settings > Roles >
 #   right-click the role > Copy Role ID.) Leave "" to use each channel's own "ping" below.
 # ---------------------------------------------------------------------
-ping_role_id: ""
+ping_role_id: "1560936092004257832"
 
 # ---------------------------------------------------------------------
 #  Discord post
