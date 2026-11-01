@@ -1,17 +1,19 @@
 {
-  "last_scheduled_week": null,
+  "last_midweek_slot": null,
+  "last_scheduled_week": "2026-11-02",
+  "midweek_pinged": {},
   "weeks": {
     "2026-11-02": [
-      "LIT",
-      "WLD",
-      "NEAR",
       "1000PEPE",
-      "DOT",
       "ENA",
-      "ARB",
-      "ZRO",
-      "ZEC",
-      "VVV"
+      "NEAR",
+      "LIT",
+      "XPL",
+      "WLD",
+      "UNI",
+      "XRP",
+      "PUMP",
+      "ZEC"
     ]
   }
 }
