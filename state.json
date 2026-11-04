@@ -1,7 +1,13 @@
 {
-  "last_midweek_slot": null,
+  "last_midweek_slot": "2026-11-04T18:00:00+00:00",
   "last_scheduled_week": "2026-11-02",
-  "midweek_pinged": {},
+  "midweek_pinged": {
+    "2026-11-02": [
+      "TRUMP",
+      "PONS",
+      "STRK"
+    ]
+  },
   "weeks": {
     "2026-11-02": [
       "1000PEPE",
