@@ -128,6 +128,5 @@ def test_4h_doritos_only_for_btc():
     from screener.alerts import coin_timeframes
     from screener.config import load_config
     cfg = load_config()
-    assert "4h" in coin_timeframes("BTC", cfg)
-    assert "4h" not in coin_timeframes("ETH", cfg)
-    assert "12h" in coin_timeframes("ETH", cfg) and "1w" in coin_timeframes("ETH", cfg)
+    assert coin_timeframes("BTC", cfg) == ["4h", "12h", "1d", "3d", "1w"]
+    assert coin_timeframes("ETH", cfg) == ["1d", "3d", "1w"]
