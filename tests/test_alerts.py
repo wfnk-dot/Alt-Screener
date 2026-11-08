@@ -122,3 +122,12 @@ def test_forming_intraday_candles_are_dropped():
     s = closed_series([], h4, now, h12)
     assert [b.day.hour for b in s["4h"]] == [0]
     assert [b.day for b in s["12h"]][-1] == datetime(2026, 10, 29, 12, tzinfo=timezone.utc)
+
+
+def test_4h_doritos_only_for_btc():
+    from screener.alerts import coin_timeframes
+    from screener.config import load_config
+    cfg = load_config()
+    assert "4h" in coin_timeframes("BTC", cfg)
+    assert "4h" not in coin_timeframes("ETH", cfg)
+    assert "12h" in coin_timeframes("ETH", cfg) and "1w" in coin_timeframes("ETH", cfg)

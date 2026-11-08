@@ -212,6 +212,16 @@ def pick_coins(cfg, http, hl):
     return [(by_hl[n], n, by_hl[n] + quote) for n in ranked[: a["top_n"]]]
 
 
+def coin_timeframes(name, cfg):
+    """Timeframes checked for this Hyperliquid coin: BTC gets all of them, alts skip the
+    `btc_only_timeframes` (e.g. 4h)."""
+    a = cfg["alerts"]
+    btc_only = set(a.get("btc_only_timeframes") or [])
+    if name == cfg["btc"]["hyperliquid_coin"]:
+        return list(a["timeframes"])
+    return [tf for tf in a["timeframes"] if tf not in btc_only]
+
+
 def run(cfg, dry_run=False, now=None):
     a, d = cfg["alerts"], cfg["data"]
     now = now or datetime.now(timezone.utc)
@@ -232,6 +242,10 @@ def run(cfg, dry_run=False, now=None):
     http = Http(timeout=d["timeout_seconds"], pool=d["parallel_downloads"])
     hl = hyperliquid_coins(http, d["hyperliquid_url"])
     coins = pick_coins(cfg, http, hl)
+    btc_hl = cfg["btc"]["hyperliquid_coin"]
+    if not any(c[1] == btc_hl for c in coins):  # BTC always gets checked, even if not in the top N
+        coins.append(("BTC", btc_hl, cfg["btc"]["binance_symbol"]))
+    tfs = {c: [tf for tf in coin_timeframes(c[1], cfg) if tf in due] for c in coins}
     log.info("Checking %s on %d coins", ", ".join(due), len(coins))
     hl_throttle = Throttle(d["hyperliquid_seconds_between_calls"])
     bn_throttle = Throttle(a["binance_seconds_between_calls"])
@@ -259,20 +273,28 @@ def run(cfg, dry_run=False, now=None):
             log.warning("Hyperliquid %s candles failed for %s: %s", interval, name, e)
             return None
 
-    need_daily = any(tf in due for tf in ("1d", "3d", "1w"))
-    daily = parallel_map(lambda c: fetch(c, "1d", 4900), coins, 4) if need_daily else {}
-    h4 = parallel_map(lambda c: fetch(c, "4h", 800), coins, 4) if "4h" in due else {}
-    h12 = parallel_map(lambda c: fetch(c, "12h", 2000), coins, 4) if "12h" in due else {}
+    def needs(c, wanted):
+        return any(tf in tfs[c] for tf in wanted)
+
+    def load(interval, days, wanted):
+        todo = [c for c in coins if needs(c, wanted)]
+        return parallel_map(lambda c: fetch(c, interval, days), todo, 4) if todo else {}
+
+    daily = load("1d", 4900, ("1d", "3d", "1w"))
+    h4 = load("4h", 800, ("4h",))
+    h12 = load("12h", 2000, ("12h",))
 
     records, failed = [], []
     for coin in coins:
         base, name, _ = coin
-        if ((need_daily and daily.get(coin) is None) or ("4h" in due and h4.get(coin) is None)
-                or ("12h" in due and h12.get(coin) is None)):
+        if not tfs[coin]:
+            continue
+        if ((needs(coin, ("1d", "3d", "1w")) and daily.get(coin) is None) or (needs(coin, ("4h",)) and h4.get(coin) is None)
+                or (needs(coin, ("12h",)) and h12.get(coin) is None)):
             failed.append(base)
             continue
         series = closed_series(daily.get(coin) or [], h4.get(coin) or [], now, h12.get(coin) or [])
-        series = {tf: bars for tf, bars in series.items() if tf in due}
+        series = {tf: bars for tf, bars in series.items() if tf in tfs[coin]}
         found, seen = new_signals(series, state.get(name, {}), cfg, now)
         state[name] = {**state.get(name, {}), **seen}
         raw = daily.get(coin) or h4.get(coin) or h12.get(coin) or []
