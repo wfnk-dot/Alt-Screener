@@ -9,7 +9,7 @@ Each gets a daily and weekly trend tag. Output:
 - **`latest/report.md`**: every coin that passed the filters
 
 It also sends **Dorito alerts** (Leledc exhaustion, confirmed on candle close) for the top 50 coins on the
-4h, 12h, daily, 3-day and weekly to a separate Discord channel.
+daily, 3-day and weekly (plus 4h and 12h for BTC only) to a separate Discord channel.
 
 Mid-week (Wednesday by default) it pings the watchlist channel if a coin has jumped into the top 10.
 A **catalysts** channel gets the week ahead every Sunday (high-impact US news, big-tech earnings, how BTC
