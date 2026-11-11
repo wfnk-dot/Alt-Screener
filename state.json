@@ -1,11 +1,16 @@
 {
-  "last_midweek_slot": "2026-11-04T18:00:00+00:00",
+  "last_midweek_slot": "2026-11-11T18:00:00+00:00",
   "last_scheduled_week": "2026-11-09",
   "midweek_pinged": {
     "2026-11-02": [
       "TRUMP",
       "PONS",
       "STRK"
+    ],
+    "2026-11-09": [
+      "ZRO",
+      "AVAX",
+      "ONDO"
     ]
   },
   "weeks": {
