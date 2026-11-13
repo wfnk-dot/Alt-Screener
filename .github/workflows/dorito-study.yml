@@ -1,0 +1,51 @@
+name: Dorito Study
+
+# Study: are Doritos good invalidation levels, and do lower-timeframe band-flip entries with the stop behind them work?
+# Run it from Actions -> Dorito Study -> Run workflow. The report is saved to latest/dorito_study.md
+# and shown on the run's summary page.
+on:
+  workflow_dispatch:
+    inputs:
+      coins:
+        description: "How many coins (top by Hyperliquid volume)"
+        default: "50"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: dorito-study  # its own queue, so the alerts keep running while it works
+  cancel-in-progress: false
+
+jobs:
+  study:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install
+        run: pip install -r requirements.txt
+
+      - name: Work out the stats
+        run: |
+          python -m screener.dorito_study --coins "${{ inputs.coins }}"
+          cat latest/dorito_study.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Save the report
+        run: |
+          git config user.name "alt-screener bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add latest/dorito_study.md
+          if git diff --cached --quiet; then echo "Nothing to save"; exit 0; fi
+          git commit -m "Dorito study $(date -u +%Y-%m-%d)"
+          for i in 1 2 3; do
+            git pull --rebase origin "${GITHUB_REF_NAME}" && git push && exit 0
+            sleep 5
+          done
+          exit 1
