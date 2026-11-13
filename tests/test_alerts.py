@@ -130,3 +130,12 @@ def test_4h_doritos_only_for_btc():
     cfg = load_config()
     assert coin_timeframes("BTC", cfg) == ["4h", "12h", "1d", "3d", "1w"]
     assert coin_timeframes("ETH", cfg) == ["1d", "3d", "1w"]
+
+
+def test_skip_doritos_price_already_ran_from():
+    from screener.alerts import too_far_split
+    near = dict(coin="ENA", tf="1d", sig=1, level=100, price=104)
+    far = dict(coin="SOL", tf="3d", sig=1, level=100, price=120.1)
+    top_far = dict(coin="ETH", tf="1d", sig=-1, level=100, price=85)
+    assert too_far_split([near, far, top_far], 10) == ([near], [far, top_far])
+    assert too_far_split([near, far], 0) == ([near, far], [])

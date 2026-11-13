@@ -8,7 +8,7 @@ Each gets a daily and weekly trend tag. Output:
 - **`latest/watchlist.txt`**: TradingView import file (dated copies in `history/`)
 - **`latest/report.md`**: every coin that passed the filters
 
-It also sends **Dorito alerts** (Leledc exhaustion, confirmed on candle close) for the top 50 coins on the
+It also sends **Dorito alerts** (Leledc exhaustion, confirmed on candle close) for the top 20 coins on the
 daily, 3-day and weekly (plus 4h and 12h for BTC only) to a separate Discord channel.
 
 Mid-week (Wednesday by default) it pings the watchlist channel if a coin has jumped into the top 10.
