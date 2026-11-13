@@ -1,0 +1,51 @@
+name: Dorito Stats
+
+# One-off study: how often a Dorito that's showing part-way through a candle is still there at the close.
+# Run it from Actions -> Dorito Stats -> Run workflow. The report is saved to latest/dorito_stats.md
+# and shown on the run's summary page.
+on:
+  workflow_dispatch:
+    inputs:
+      coins:
+        description: "How many coins (top by Hyperliquid volume)"
+        default: "50"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: alt-screener
+  cancel-in-progress: false
+
+jobs:
+  stats:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install
+        run: pip install -r requirements.txt
+
+      - name: Work out the stats
+        run: |
+          python -m screener.dorito_stats --coins "${{ inputs.coins }}"
+          cat latest/dorito_stats.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Save the report
+        run: |
+          git config user.name "alt-screener bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add latest/dorito_stats.md
+          if git diff --cached --quiet; then echo "Nothing to save"; exit 0; fi
+          git commit -m "Dorito stats $(date -u +%Y-%m-%d)"
+          for i in 1 2 3; do
+            git pull --rebase origin "${GITHUB_REF_NAME}" && git push && exit 0
+            sleep 5
+          done
+          exit 1
