@@ -212,12 +212,15 @@ alerts:
   # ...but these are only checked on BTC (alts skip them)
   btc_only_timeframes: [4h, 12h]
   # How many coins: the top N by Hyperliquid 24h volume
-  top_n: 50
+  top_n: 20
   # Skip these groups from the exclude lists under "universe" (core coins are NOT skipped)
-  exclude_groups: [stablecoins, indexes, tradfi]
+  exclude_groups: [stablecoins, indexes, tradfi, gold]
   # Same settings as the indicator: "Exhaustion bar count" and "Exhaustions swing length"
   leledc_bar_count: 10
   leledc_swing_length: 40
+  # Skip a Dorito if price has already moved more than this % away from its level (the candle's
+  # high for a top, low for a bottom) by the time it's checked. Use 0 to switch this off.
+  max_distance_pct: 10
   # Who to ping: "@here", "@everyone", or "" for none
   ping: "@here"
   # Candles: Binance's live futures data (same as your TradingView chart). Hyperliquid is the backup.

@@ -151,6 +151,24 @@ def _fmt_price(v):
     return f"{v:.4g}"
 
 
+def distance_pct(r):
+    """How far price now is from the Dorito's level, in %, or None."""
+    if not r["price"] or not r["level"]:
+        return None
+    return (r["price"] / r["level"] - 1) * 100
+
+
+def too_far_split(records, max_pct):
+    """(records to alert, records skipped because price already ran more than max_pct% from the level)."""
+    if not max_pct:
+        return records, []
+    keep, skip = [], []
+    for r in records:
+        d = distance_pct(r)
+        (skip if d is not None and abs(d) > max_pct else keep).append(r)
+    return keep, skip
+
+
 def alert_card(records, tz, now, source="Binance futures"):
     """The alert picture, in the same style as the watchlist."""
     records = sorted(records, key=lambda r: (TF_ORDER[r["tf"]], r["sig"], r["coin"]))
@@ -301,6 +319,10 @@ def run(cfg, dry_run=False, now=None):
         records += alert_records(base, found, series, raw[-1].close if raw else None, cfg["indicators"])
     for tf in due:
         state.setdefault("_checked", {})[tf] = _last_close(tf, now).isoformat()
+    records, too_far = too_far_split(records, a.get("max_distance_pct") or 0)
+    if too_far:
+        log.info("Skipped (price already more than %s%% from the level): %s", a["max_distance_pct"],
+                 ", ".join(f"{r['coin']} {r['tf']} {distance_pct(r):+.1f}%" for r in too_far))
 
     if records:
         text = alert_text(records, a.get("ping", ""))
