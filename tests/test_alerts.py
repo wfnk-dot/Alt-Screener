@@ -139,3 +139,44 @@ def test_skip_doritos_price_already_ran_from():
     top_far = dict(coin="ETH", tf="1d", sig=-1, level=100, price=85)
     assert too_far_split([near, far, top_far], 10) == ([near], [far, top_far])
     assert too_far_split([near, far], 0) == ([near, far], [])
+
+
+def _early_setup(hours_done):
+    """50 rising days up to yesterday, then today's hours: a pop to a new high that fades into a red candle."""
+    from screener.config import load_config
+    cfg = load_config()
+    today = date(2026, 3, 10)
+    daily = [Bar(today - timedelta(days=50 - i), 100 + i, 101 + i, 99 + i, 101 + i, 1) for i in range(50)]
+    t0 = datetime(2026, 3, 10, tzinfo=timezone.utc)
+    hourly = []
+    for h in range(hours_done):
+        o = 151 if h == 0 else hourly[-1].close
+        c = 160 if h == 0 else max(140.0, o - 2)  # hour 0 spikes, then it bleeds lower
+        hourly.append(Bar(t0 + timedelta(hours=h), o, max(o, c) + (5 if h == 0 else 0), min(o, c), c, 1))
+    now = t0 + timedelta(hours=hours_done, minutes=5)
+    return cfg, daily, hourly, now
+
+
+def test_early_dorito_halfway_through_the_day():
+    from screener.alerts import early_check
+    cfg, daily, hourly, now = _early_setup(13)
+    closed = closed_series(daily, [], now)["1d"]
+    r = early_check(closed, hourly, "1d", now, cfg)
+    assert r and r["sig"] == -1 and r["level"] == 165 and r["elapsed"] == 13
+    assert r["showing"] >= 3 and r["closes"] == datetime(2026, 3, 11, tzinfo=timezone.utc)
+
+
+def test_no_early_dorito_before_half_way():
+    from screener.alerts import early_check
+    cfg, daily, hourly, now = _early_setup(8)
+    assert early_check(closed_series(daily, [], now)["1d"], hourly, "1d", now, cfg) is None
+
+
+def test_early_card_and_text_render():
+    from screener.alerts import early_card, early_text
+    from zoneinfo import ZoneInfo
+    now = datetime(2026, 3, 10, 13, 5, tzinfo=timezone.utc)
+    recs = [dict(coin="ENA", tf="3d", sig=1, level=1.0, price=1.05, showing=20, elapsed=40,
+                 closes=now + timedelta(hours=32))]
+    assert early_text(recs) == "**Early Doritos** (not confirmed yet) · 3-day: ENA ▲"
+    assert early_card(recs, ZoneInfo("Europe/London"), now)[:4] == b"\x89PNG"

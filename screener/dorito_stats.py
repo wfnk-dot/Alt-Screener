@@ -13,7 +13,7 @@ import sys
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 
-from .alerts import pick_coins
+from .alerts import leledc_states, partial_signal, pick_coins
 from .config import ROOT, load_config
 from .data import Http, Throttle, binance_web_klines, hyperliquid_coins
 
@@ -67,47 +67,6 @@ def build_candles(hourly, tf):
             partials.append((g[0].open, hi, lo, b.close))
         out.append(Candle(k, g[0].open, hi, lo, g[-1].close, partials))
     return out
-
-
-def leledc_states(candles, count, length):
-    """Same as alerts.leledc, but also returns the two running counts *before* each candle, so a candle
-    that's still forming can be judged on its own. Returns (signals, states)."""
-    up = down = 0
-    sigs, states = [], []
-    for i, b in enumerate(candles):
-        states.append((up, down))
-        sig = 0
-        if i >= 4:
-            if b.close > candles[i - 4].close:
-                up += 1
-            if b.close < candles[i - 4].close:
-                down += 1
-        if i >= length - 1:
-            window = candles[i - length + 1 : i + 1]
-            if up > count and b.close < b.open and b.high >= max(x.high for x in window):
-                up = 0
-                sig = -1
-            elif down > count and b.close > b.open and b.low <= min(x.low for x in window):
-                down = 0
-                sig = 1
-        sigs.append(sig)
-    return sigs, states
-
-
-def partial_signal(candles, i, partial, state, prev_hi, prev_lo, count, length):
-    """Dorito on candle i if it closed with this partial (open, high, low, close)."""
-    o, h, l, c = partial
-    up, down = state
-    if i >= 4:
-        up += c > candles[i - 4].close
-        down += c < candles[i - 4].close
-    if i < length - 1:
-        return 0
-    if up > count and c < o and h >= prev_hi:
-        return -1
-    if down > count and c > o and l <= prev_lo:
-        return 1
-    return 0
 
 
 def replay(candles, count, length):

@@ -221,6 +221,12 @@ alerts:
   # Skip a Dorito if price has already moved more than this % away from its level (the candle's
   # high for a top, low for a bottom) by the time it's checked. Use 0 to switch this off.
   max_distance_pct: 10
+  # Early alerts: a Dorito showing on a candle that's still open (it can still disappear before the close).
+  # Sent once the candle is this % done and the Dorito has been showing for this % of the candle without
+  # a break (12% = 3 hours on the daily, 9 hours on the 3-day, 20 hours on the weekly). [] switches it off.
+  early_timeframes: [1d, 3d, 1w]
+  early_at_pct: 50
+  early_min_showing_pct: 12
   # Who to ping: "@here", "@everyone", or "" for none
   ping: "@here"
   # Candles: Binance's live futures data (same as your TradingView chart). Hyperliquid is the backup.

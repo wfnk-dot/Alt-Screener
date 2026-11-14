@@ -85,8 +85,13 @@ You get a new list with a **CORE** section (BTC, ETH, SOL, HYPE, gold) and an **
 ## 5. Dorito alerts (separate channel)
 
 The alerts check the top 20 coins every 15 minutes for Leledc exhaustion Doritos on the **daily, 3-day
-and weekly** (BTC also gets the **4h and 12h**). An alert only goes out once the candle has **closed** with the Dorito, so ones that appear
-mid-candle and then disappear never alert. They post to their own channel.
+and weekly** (BTC also gets the **4h and 12h**). The main alert only goes out once the candle has **closed** with the
+Dorito. They post to their own channel.
+
+**Early Doritos** (daily, 3-day, weekly): once a candle is half done and a Dorito has been showing on it for a
+while (3h daily, 9h 3-day, 20h weekly), an early alert goes out marked "not confirmed yet", with how often that
+held to the close over the past 3 years. If it then disappears by the close, a short follow-up says so. Turn
+them off with `early_timeframes: []` in `config.yml`.
 
 1. In Discord, make a webhook in the alerts channel, the same way as step 1 (⚙️ → Integrations →
    Webhooks → New Webhook → Copy Webhook URL).
