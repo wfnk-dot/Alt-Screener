@@ -24,8 +24,9 @@ import sys
 from collections import namedtuple
 from datetime import date, datetime, timedelta, timezone
 
-from .alerts import leledc, pick_coins
+from .alerts import pick_coins
 from .config import ROOT, load_config
+from .dorito_stats import leledc_states, partial_signal
 from .data import BinanceArchive, Http, Throttle, binance_web_klines, hyperliquid_coins, parallel_map
 from .indicators import ema
 
@@ -112,23 +113,99 @@ def outcome(t, target):
 
 
 # ---------------------------------------------------------------- one coin
+def stop_at(level, d):
+    return level * (1 - BUFFER) if d == 1 else level * (1 + BUFFER)
+
+
+def crossed_stop(bar, stop_px, d):
+    return bar[3] <= stop_px if d == 1 else bar[2] >= stop_px
+
+
+def risk_ok(entry, stop_px, d):
+    return (entry - stop_px) * d > 0 and abs(entry - stop_px) / entry * 100 >= MIN_RISK_PCT
+
+
+def level_entries(bars, t0, level, d, n15):
+    """Entries that use the level directly: at the close, or a limit order part of the way back to it.
+    Returns {entry name: (risk %, best R, stopped, final R)}."""
+    out = {}
+    stop_px = stop_at(level, d)
+    close = bars[t0][4]
+    if risk_ok(close, stop_px, d):
+        out["at close"] = simulate(bars, t0 + 1, close, stop_px, d, TRADE_CANDLES * n15)
+    for name, frac in (("limit 50% back", 0.5), ("limit 75% back", 0.25)):
+        limit = level + frac * (close - level)
+        if not risk_ok(limit, stop_px, d):
+            continue
+        for j in range(t0 + 1, min(len(bars), t0 + 1 + ENTRY_WAIT * n15)):
+            b = bars[j]
+            if (d == 1 and b[3] <= limit) or (d == -1 and b[2] >= limit):
+                if crossed_stop(b, stop_px, d):  # filled and stopped in the same 15 minutes
+                    out[name] = (abs(limit - stop_px) / limit * 100, 0.0, True, -1.0)
+                else:
+                    out[name] = simulate(bars, j + 1, limit, stop_px, d, TRADE_CANDLES * n15)
+                break
+    return out
+
+
+def flip_entry(bars, t0, level, d, lt, n15):
+    """First lower-timeframe candle closing with the bands the Dorito's way, if the level hasn't broken."""
+    lc, ls, llasts = lt
+    stop_px = stop_at(level, d)
+    k0 = bisect.bisect_right(llasts, t0 - 1)
+    for k1 in range(k0, len(lc)):
+        if lc[k1].last > t0 + ENTRY_WAIT * n15:
+            return None
+        if ls[k1] == d:
+            e_idx = lc[k1].last
+            if any(crossed_stop(bars[j], stop_px, d) for j in range(t0 + 1, e_idx + 1)):
+                return None
+            entry = bars[e_idx][4]
+            if not risk_ok(entry, stop_px, d):
+                return None
+            return simulate(bars, e_idx + 1, entry, stop_px, d, TRADE_CANDLES * n15)
+    return None
+
+
+def early_entry(bars, t, level, d, n15):
+    """Enter at the close of 15m bar t (half-way through the candle), stop past the level so far."""
+    stop_px = stop_at(level, d)
+    entry = bars[t][4]
+    if not risk_ok(entry, stop_px, d):
+        return None
+    return simulate(bars, t + 1, entry, stop_px, d, TRADE_CANDLES * n15)
+
+
+def _trade(info, kind, entry, res):
+    risk, best, stopped, final = res
+    return {**info, "kind": kind, "ltf": entry, "risk": risk, "best": best, "stopped": stopped, "final": final}
+
+
 def study_coin(bars, group, oos_from_ms, rnd):
     levels, trades = [], []
     for htf, ltfs in ENTRY_TFS.items():
         hc = aggregate(bars, htf)
         if len(hc) < 60:
             continue
-        sigs = leledc(hc)
+        sigs, lstates = leledc_states(hc, 10, 40)
         hstates = band_states(hc)
         up = HIGHER[htf]
         uc = aggregate(bars, up) if up else []
         ustates = band_states(uc) if up else []
         ulasts = [c.last for c in uc]
         n15 = MIN[htf] // 15
+        half = n15 // 2
         lt = {}
         for ltf in ltfs:
             lc = aggregate(bars, ltf)
             lt[ltf] = (lc, band_states(lc), [c.last for c in lc])
+
+        def base_info(i, d, at):
+            k = bisect.bisect_right(ulasts, at) - 1
+            return {"htf": htf, "dir": d, "group": group, "oos": bars[at][0] >= oos_from_ms,
+                    "bands": hstates[i - 1] if i else None, "bands_up": ustates[k] if k >= 0 else None,
+                    "given_back": None}
+
         dorito_bars = {1: [], -1: []}
         for i, s in enumerate(sigs):
             if not s:
@@ -139,67 +216,68 @@ def study_coin(bars, group, oos_from_ms, rnd):
             level = c.low if s == 1 else c.high
             base = [x.high for x in hc[max(0, i - 10):i + 1]] if s == 1 else [x.low for x in hc[max(0, i - 10):i + 1]]
             run = (max(base) - level) if s == 1 else (level - min(base))
-            given_back = ((c.close - level) * s / run) if run > 0 else 0.0
             rng = c.high - c.low
-            wick = ((min(c.open, c.close) - c.low) if s == 1 else (c.high - max(c.open, c.close))) / rng if rng else 0
-            k = bisect.bisect_right(ulasts, t0) - 1
-            info = {
-                "htf": htf, "dir": s, "group": group, "oos": bars[t0][0] >= oos_from_ms,
-                "bands": hstates[i], "bands_up": ustates[k] if k >= 0 else None,
-                "given_back": given_back, "wick": wick,
-            }
+            info = {**base_info(i, s, t0), "bands": hstates[i],
+                    "given_back": ((c.close - level) * s / run) if run > 0 else 0.0,
+                    "wick": ((min(c.open, c.close) - c.low) if s == 1 else (c.high - max(c.open, c.close))) / rng if rng else 0}
             # 1. Level test
-            stop_px = level * (1 - BUFFER) if s == 1 else level * (1 + BUFFER)
+            stop_px = stop_at(level, s)
             broke_at, best = None, 0.0
             for j in range(t0 + 1, min(len(bars), t0 + 1 + LEVEL_CANDLES * n15)):
                 _, _, h, l, _ = bars[j]
                 if (s == 1 and l < stop_px) or (s == -1 and h > stop_px):
-                    broke_at = (j - t0 - 1) // n15 + 1  # in Dorito candles
+                    broke_at = (j - t0 - 1) // n15 + 1
                     break
                 best = max(best, ((h - level) if s == 1 else (level - l)) / level * 100)
             if t0 + LEVEL_CANDLES * n15 < len(bars) or broke_at:
                 levels.append({**info, "broke": broke_at, "rotation": best,
                                "close_dist": (c.close - level) * s / level * 100})
-            # 2. Trade test
-            for ltf, (lc, ls, llasts) in lt.items():
-                k0 = bisect.bisect_right(llasts, t0 - 1)  # LTF candles closing at or after the Dorito close
-                entry_k = None
-                for k1 in range(k0, len(lc)):
-                    if lc[k1].last > t0 + ENTRY_WAIT * n15:
-                        break
-                    if ls[k1] == s:
-                        entry_k = k1
-                        break
-                if entry_k is None:
-                    continue
-                e_idx = lc[entry_k].last
-                broken = any((bars[j][3] < stop_px) if s == 1 else (bars[j][2] > stop_px) for j in range(t0 + 1, e_idx + 1))
-                entry = bars[e_idx][4]
-                if broken or (entry - stop_px) * s <= 0 or abs(entry - stop_px) / entry * 100 < MIN_RISK_PCT:
-                    continue
-                risk, best_r, stopped, final = simulate(bars, e_idx + 1, entry, stop_px, s, TRADE_CANDLES * n15)
-                trades.append({**info, "kind": "dorito", "ltf": ltf, "risk": risk, "best": best_r,
-                               "stopped": stopped, "final": final})
-        # "No Dorito" baseline: same band-flip entries, stop past the swing high/low of the last 3 candles
-        for ltf, (lc, ls, llasts) in lt.items():
-            for s in (1, -1):
-                flips = [k1 for k1 in range(1, len(lc)) if ls[k1] == s and ls[k1 - 1] != s]
-                near = dorito_bars[s]
-                flips = [k1 for k1 in flips
-                         if not _near_dorito(near, lc[k1].last, (ENTRY_WAIT + 2) * n15)]
-                for k1 in rnd.sample(flips, min(CONTROL_PER_COIN, len(flips))):
-                    e_idx = lc[k1].last
-                    lo = max(0, e_idx - 3 * n15)
-                    seg = bars[lo:e_idx + 1]
-                    level = min(b[3] for b in seg) if s == 1 else max(b[2] for b in seg)
-                    stop_px = level * (1 - BUFFER) if s == 1 else level * (1 + BUFFER)
-                    entry = bars[e_idx][4]
-                    if (entry - stop_px) * s <= 0 or abs(entry - stop_px) / entry * 100 < MIN_RISK_PCT:
-                        continue
-                    risk, best_r, stopped, final = simulate(bars, e_idx + 1, entry, stop_px, s, TRADE_CANDLES * n15)
-                    trades.append({"kind": "control", "htf": htf, "ltf": ltf, "dir": s, "group": group,
-                                   "oos": bars[e_idx][0] >= oos_from_ms, "risk": risk, "best": best_r,
-                                   "stopped": stopped, "final": final})
+            # 2. Trades
+            for name, res in level_entries(bars, t0, level, s, n15).items():
+                trades.append(_trade(info, "dorito", name, res))
+            for ltf in ltfs:
+                res = flip_entry(bars, t0, level, s, lt[ltf], n15)
+                if res:
+                    trades.append(_trade(info, "dorito", f"{ltf} flip", res))
+
+        # 3. Early: Dorito showing half-way through the candle (it may still disappear by the close)
+        for i in range(39, len(hc)):
+            c = hc[i]
+            first, t = c.last - n15 + 1, c.last - n15 + half
+            hi = max(bars[j][2] for j in range(first, t + 1))
+            lo = min(bars[j][3] for j in range(first, t + 1))
+            part = (bars[first][1], hi, lo, bars[t][4])
+            prev = hc[i - 39:i]
+            s = partial_signal(hc, i, part, lstates[i], max(x.high for x in prev), min(x.low for x in prev), 10, 40)
+            if not s:
+                continue
+            res = early_entry(bars, t, lo if s == 1 else hi, s, n15)
+            if res:
+                trades.append(_trade({**base_info(i, s, t), "confirmed": sigs[i] == s}, "dorito", "early (half-way)", res))
+
+        # "No Dorito" baseline: the same entries at random candles with no Dorito near, using the swing
+        # high/low of the last 3 candles as the level
+        for s in (1, -1):
+            near = dorito_bars[s]
+            idx = [i for i in range(40, len(hc) - 1) if not _near_dorito(near, hc[i].last, (ENTRY_WAIT + 2) * n15)]
+            for i in rnd.sample(idx, min(CONTROL_PER_COIN, len(idx))):
+                t0 = hc[i].last
+                seg = bars[max(0, t0 - 3 * n15 + 1):t0 + 1]
+                level = min(b[3] for b in seg) if s == 1 else max(b[2] for b in seg)
+                info = base_info(i, s, t0)
+                for name, res in level_entries(bars, t0, level, s, n15).items():
+                    trades.append(_trade(info, "control", name, res))
+                for ltf in ltfs:
+                    res = flip_entry(bars, t0, level, s, lt[ltf], n15)
+                    if res:
+                        trades.append(_trade(info, "control", f"{ltf} flip", res))
+                t = t0 - n15 + half + n15  # half-way through the next candle
+                if t < len(bars):
+                    seg = bars[max(0, t - 3 * n15 + 1):t + 1]
+                    lvl = min(b[3] for b in seg) if s == 1 else max(b[2] for b in seg)
+                    res = early_entry(bars, t, lvl, s, n15)
+                    if res:
+                        trades.append(_trade(info, "control", "early (half-way)", res))
     return levels, trades
 
 
@@ -301,89 +379,125 @@ def band_name(v):
     return {1: "green", -1: "red"}.get(v, "n/a")
 
 
+GROUPS = ("BTC", "Big alts", "Other alts", "Small alts")
+LEVEL_ENTRIES = ("at close", "limit 50% back", "limit 75% back", "early (half-way)")
+
+
+def avg_r(s):
+    return f"{s['e']:+.2f}R" if s else "–"
+
+
+def entries_for(htf):
+    return list(LEVEL_ENTRIES) + [f"{ltf} flip" for ltf in ENTRY_TFS[htf]]
+
+
+def splits(htf, entry):
+    out = [("All", lambda t: True)]
+    out += [(g, (lambda g: lambda t: t["group"] == g)(g)) for g in GROUPS]
+    if HIGHER[htf]:
+        out += [(f"Bands above ({LABEL[HIGHER[htf]]}) {band_name(b)}", (lambda b: lambda t: t["bands_up"] == b)(b))
+                for b in (1, -1)]
+    if entry != "early (half-way)":
+        out += [("Given back <30%", lambda t: t["given_back"] is not None and t["given_back"] < 0.3),
+                ("Given back 60%+ (quick wick)", lambda t: t["given_back"] is not None and t["given_back"] >= 0.6)]
+    return out
+
+
 def report(levels, trades, coins, years, oos_from):
     dname = {1: "Bottoms", -1: "Tops"}
+    by = {}
+    for t in trades:
+        by.setdefault((t["kind"], t["htf"], t["dir"], t["ltf"]), []).append(t)
     out = [
-        "# Dorito study: invalidation levels and lower-timeframe entries",
+        "# Dorito study: invalidation levels and entries",
         "",
         f"{coins} coins, about {years:.1f} years of Binance 15-minute candles, generated "
         f"{datetime.now(timezone.utc):%Y-%m-%d %H:%M} UTC. \"Last year\" = from {oos_from}.",
         "",
-        "**How to read it.** Numbers in brackets are the 95% range: with this many examples the true value is "
-        f"very likely inside it. ⚠️ = fewer than {MIN_N} examples, don't lean on it. "
-        f"Stops are {BUFFER:.1%} past the level; fees of {FEES_PCT:.2f}% a trade are taken off. A trade still open "
-        f"after {TRADE_CANDLES} Dorito-timeframe candles is closed at market.",
+        "**Entries tested** (stop always just past the Dorito level, "
+        f"{BUFFER:.1%} buffer; fees of {FEES_PCT:.2f}% a trade taken off; still open after {TRADE_CANDLES} candles = closed):",
+        "- **at close**: buy/sell when the Dorito candle closes.",
+        f"- **limit 50% back / 75% back**: after the close, a limit order half / three-quarters of the way back to "
+        f"the level, live for {ENTRY_WAIT} candles. Only counts if it fills.",
+        "- **early (half-way)**: the Dorito is showing half-way through the candle: enter then, stop past the "
+        "candle's low/high so far. Includes the ones that then disappear before the close.",
+        f"- **15m flip etc.**: first lower-timeframe candle (within {ENTRY_WAIT} candles) closing with the XO bands "
+        "the Dorito's way.",
         "",
-        "**Trade test entry:** after the Dorito candle closes, the first lower-timeframe candle (within "
-        f"{ENTRY_WAIT} Dorito candles) that closes with the XO bands the Dorito's way: red for tops, green for "
-        "bottoms. If the level breaks before that, no trade. **No-Dorito baseline:** the same band-flip entries "
-        "at random times with no Dorito nearby, stop past the swing high/low of the last 3 Dorito-timeframe "
-        "candles. If a Dorito setup doesn't beat that, the Dorito isn't adding anything.",
+        "**No-Dorito baseline**: the same entries at random candles with no Dorito nearby, using the swing low/high "
+        "of the last 3 candles as the level. If a Dorito entry doesn't beat its baseline, the Dorito isn't adding "
+        "anything.",
         "",
-        "**Given back** = how much of the run into the Dorito had already been retraced by the candle close "
-        "(a quick wick that dumped straight back = a lot given back).",
+        f"**How to read it.** Brackets / ± = the 95% range. ⚠️ = fewer than {MIN_N} trades, don't lean on it. "
+        "**Avg R** = average result per trade with a 3R target. Break-even with a 3R target needs about 25% of "
+        "trades to reach 3R.",
         "",
     ]
-    # Setups that clear the bar
     tested, winners = 0, []
-    for htf, ltfs in ENTRY_TFS.items():
-        for ltf in ltfs:
+    for htf in ENTRY_TFS:
+        for entry in entries_for(htf):
             for d in (1, -1):
-                ctrl = [t for t in trades if t["kind"] == "control" and t["htf"] == htf and t["ltf"] == ltf and t["dir"] == d]
-                base = [t for t in trades if t["kind"] == "dorito" and t["htf"] == htf and t["ltf"] == ltf and t["dir"] == d]
-                for split, fn in [("all", lambda t: True)] + [
-                        (f"{g}", (lambda g: lambda t: t["group"] == g)(g)) for g in ("BTC", "Big alts", "Other alts")] + [
-                        (f"bands {band_name(b)}", (lambda b: lambda t: t["bands"] == b)(b)) for b in (1, -1)] + [
-                        (f"bands above {band_name(b)}", (lambda b: lambda t: t["bands_up"] == b)(b)) for b in (1, -1)] + [
-                        ("given back <30%", lambda t: t["given_back"] < 0.3),
-                        ("given back 60%+", lambda t: t["given_back"] >= 0.6)]:
+                ctrl = by.get(("control", htf, d, entry), [])
+                base = by.get(("dorito", htf, d, entry), [])
+                for name, fn in splits(htf, entry):
                     tested += 1
                     rs = [t for t in base if fn(t)]
                     if passes(rs, ctrl):
                         s = trade_stats(rs)
-                        winners.append((s["e"], f"{LABEL[htf]} {dname[d].lower()}, {ltf} entry, {split}", s["n"]))
+                        winners.append((s["e"], f"{LABEL[htf]} {dname[d].lower()}, {entry}, {name}", s["n"]))
     out += ["## Setups that pass every check", "",
             f"Checked {tested} combinations. To pass: {MIN_N}+ trades, average result above 0 even at the low end "
             "of its range, still positive on the last year alone, and better than the no-Dorito baseline. With this "
-            "many combinations a few could still pass by luck, so treat a lone pass with care.", ""]
-    if winners:
-        out += [f"- **{name}**: {e:+.2f}R a trade with a 3R target, {n} trades" for e, name, n in sorted(winners, reverse=True)]
-    else:
-        out.append("**None.** Nothing cleared the bar.")
+            "many combinations a few could pass by luck, so treat a lone pass with care.", ""]
+    out += ([f"- **{n}**: {e:+.2f}R a trade, {k} trades" for e, n, k in sorted(winners, reverse=True)]
+            or ["**None.** Nothing cleared the bar."])
+    out += ["", "## Summary: every entry, all coins", "",
+            "| Dorito | Entry | Trades | Reached 2R | Reached 3R | Avg R (± range) | First 2 years / last year | No-Dorito baseline |",
+            "|---|---|---|---|---|---|---|---|"]
+    for htf in ENTRY_TFS:
+        for d in (1, -1):
+            for entry in entries_for(htf):
+                rs = by.get(("dorito", htf, d, entry), [])
+                s = trade_stats(rs)
+                if not s:
+                    continue
+                ins = trade_stats([r for r in rs if not r["oos"]])
+                oos = trade_stats([r for r in rs if r["oos"]])
+                b = trade_stats(by.get(("control", htf, d, entry), []))
+                out.append(f"| {LABEL[htf]} {dname[d].lower()} | {entry} | {s['n']}{flag(s['n'])} "
+                           f"| {pc(s['hits'][2] / s['n'])} | {pc(s['hits'][3] / s['n'])} "
+                           f"| **{s['e']:+.2f}R** ± {s['ci']:.2f} "
+                           f"| {avg_r(ins)} / {avg_r(oos)} | {avg_r(b)} |")
     out.append("")
 
-    for htf, ltfs in ENTRY_TFS.items():
+    for htf in ENTRY_TFS:
         out += [f"## {LABEL[htf]} Doritos", ""]
         for d in (1, -1):
             lv = [r for r in levels if r["htf"] == htf and r["dir"] == d]
-            if not lv:
-                continue
             out += [f"### {dname[d]}", ""]
-            out += level_table(
-                [("All", lv)] + [(g, [r for r in lv if r["group"] == g]) for g in ("BTC", "Big alts", "Other alts")]
-                + [(f"Bands {band_name(b)} at the Dorito", [r for r in lv if r["bands"] == b]) for b in (1, -1)]
-                + [(f"Bands above ({LABEL.get(HIGHER[htf], '')}) {band_name(b)}", [r for r in lv if r["bands_up"] == b])
-                   for b in (1, -1) if HIGHER[htf]]
-                + [("Given back <30%", [r for r in lv if r["given_back"] < 0.3]),
-                   ("Given back 30–60%", [r for r in lv if 0.3 <= r["given_back"] < 0.6]),
-                   ("Given back 60%+ (quick wick)", [r for r in lv if r["given_back"] >= 0.6])],
-                "Does the level hold?")
-            for ltf in ltfs:
-                tr = [t for t in trades if t["kind"] == "dorito" and t["htf"] == htf and t["ltf"] == ltf and t["dir"] == d]
-                ctrl = [t for t in trades if t["kind"] == "control" and t["htf"] == htf and t["ltf"] == ltf and t["dir"] == d]
+            if lv:
+                out += level_table(
+                    [("All", lv)] + [(g, [r for r in lv if r["group"] == g]) for g in GROUPS]
+                    + [(f"Bands above ({LABEL[HIGHER[htf]]}) {band_name(b)}", [r for r in lv if r["bands_up"] == b])
+                       for b in (1, -1) if HIGHER[htf]]
+                    + [("Given back <30%", [r for r in lv if r["given_back"] < 0.3]),
+                       ("Given back 30–60%", [r for r in lv if 0.3 <= r["given_back"] < 0.6]),
+                       ("Given back 60%+ (quick wick)", [r for r in lv if r["given_back"] >= 0.6])],
+                    "Does the level hold?")
+            for entry in entries_for(htf):
+                tr = by.get(("dorito", htf, d, entry), [])
                 if not tr:
                     continue
-                rows = [("All", tr)] + [(g, [t for t in tr if t["group"] == g]) for g in ("BTC", "Big alts", "Other alts")] \
-                    + [(f"Bands {band_name(b)} at the Dorito", [t for t in tr if t["bands"] == b]) for b in (1, -1)] \
-                    + [(f"Bands above {band_name(b)}", [t for t in tr if t["bands_up"] == b]) for b in (1, -1) if HIGHER[htf]] \
-                    + [("Given back <30%", [t for t in tr if t["given_back"] < 0.3]),
-                       ("Given back 60%+ (quick wick)", [t for t in tr if t["given_back"] >= 0.6])]
-                out += [f"**Trade: {ltf} band flip, stop past the Dorito** (typical stop distance "
-                        f"{statistics.median(t['risk'] for t in tr):.1f}%)", ""] + TRADE_HEAD
-                for name, rs in rows:
-                    row = trade_row(name, rs, ctrl if name == "All" else None)
+                ctrl = by.get(("control", htf, d, entry), [])
+                out += [f"**Entry: {entry}** (typical stop distance {statistics.median(t['risk'] for t in tr):.1f}%)", ""]
+                out += TRADE_HEAD
+                for name, fn in splits(htf, entry):
+                    row = trade_row(name, [t for t in tr if fn(t)], ctrl if name == "All" else None)
                     if row:
                         out.append(row)
+                if entry == "early (half-way)":
+                    kept = [t for t in tr if t.get("confirmed")]
+                    out.append(f"\nOf these, {pc(len(kept) / len(tr))} were still there at the close.")
                 out.append("")
     return "\n".join(out) + "\n"
 
@@ -430,7 +544,7 @@ def load_15m(http, archive, a, symbol, now, months, throttle):
 
 def main(argv=None):
     p = argparse.ArgumentParser(description="Dorito invalidation / entry study")
-    p.add_argument("--coins", type=int, default=50)
+    p.add_argument("--coins", type=int, default=100)
     p.add_argument("--months", type=int, default=37)
     args = p.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -447,7 +561,7 @@ def main(argv=None):
     rnd = random.Random(7)
     levels, trades, spans, used = [], [], [], 0
     for rank, (base, _, symbol) in enumerate(coins):
-        group = "BTC" if base == "BTC" else ("Big alts" if rank < 10 else "Other alts")
+        group = "BTC" if base == "BTC" else ("Big alts" if rank < 10 else "Other alts" if rank < 50 else "Small alts")
         try:
             bars = load_15m(http, archive, a, symbol, now, args.months, throttle)
         except Exception as e:  # noqa: BLE001
