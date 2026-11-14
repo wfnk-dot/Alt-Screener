@@ -24,9 +24,8 @@ import sys
 from collections import namedtuple
 from datetime import date, datetime, timedelta, timezone
 
-from .alerts import pick_coins
+from .alerts import leledc_states, partial_signal, pick_coins
 from .config import ROOT, load_config
-from .dorito_stats import leledc_states, partial_signal
 from .data import BinanceArchive, Http, Throttle, binance_web_klines, hyperliquid_coins, parallel_map
 from .indicators import ema
 
