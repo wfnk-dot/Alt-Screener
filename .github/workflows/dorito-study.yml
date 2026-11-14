@@ -8,7 +8,7 @@ on:
     inputs:
       coins:
         description: "How many coins (top by Hyperliquid volume)"
-        default: "50"
+        default: "100"
 
 permissions:
   contents: write

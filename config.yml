@@ -250,7 +250,7 @@ events:
     # Optional extras: delete the "# " in front of a line to switch it on
     # - Core PCE Price Index MoM     # the Fed's other inflation number
     # - Fed Chair                    # Fed Chair speeches and testimony
-    # - PPI MoM                      # producer prices
+    - PPI MoM                        # producer prices
     # - Retail Sales MoM
     # - GDP Growth Rate
   # ...but never these
