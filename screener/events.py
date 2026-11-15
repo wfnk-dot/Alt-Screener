@@ -54,11 +54,12 @@ def ff_events(http, url, countries, impacts):
 
 
 def tv_events(http, url, start, end, countries, include, skip):
-    """TradingView's economic calendar (has future AND past releases): high-importance events whose title
-    contains one of `include` (and none of `skip`). Same shape as ff_events."""
+    """TradingView's economic calendar (has future AND past releases): medium- and high-importance events
+    whose title contains one of `include` (and none of `skip`). Same shape as ff_events. Medium is asked
+    for too because TradingView rates some wanted ones (core retail sales) medium; `include` does the filtering."""
     r = http.request("GET", url, headers={**BROWSER, "Origin": "https://www.tradingview.com"},
                      params={"from": start.strftime("%Y-%m-%dT%H:%M:%S.000Z"), "to": end.strftime("%Y-%m-%dT%H:%M:%S.000Z"),
-                             "countries": ",".join(countries), "minImportance": 1}).json()
+                             "countries": ",".join(countries), "minImportance": 0}).json()
     out = []
     for e in r.get("result") or []:
         title = e.get("title", "")
