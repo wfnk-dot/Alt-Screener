@@ -61,6 +61,7 @@ def test_tradingview_calendar(cfg):
     titles = {r["title"] for r in rows}
     assert {"Fed Interest Rate Decision", "Inflation Rate MoM", "Non Farm Payrolls"} <= titles
     assert not any("Housing" in t or "Existing Home" in t for t in titles)  # not on the list
+    assert {"FOMC Minutes", "Fed Chair Warsh Speech", "Retail Sales MoM", "PPI MoM"} <= titles
     cpi = next(r for r in rows if r["title"] == "Inflation Rate MoM" and r["when"].date() == date(2026, 10, 14))
     assert cpi["forecast"] == "0.6%" and cpi["previous"] == "0.4%"
     nfp = next(r for r in rows if r["title"] == "Non Farm Payrolls" and r["when"].date() == date(2026, 10, 2))

@@ -245,19 +245,21 @@ events:
   reminders_minutes: [1440, 60, 15]
   # Who to ping: "@here", "@everyone", or "" for none
   ping: "@here"
-  # Which news: high-importance US events from TradingView's economic calendar whose name contains
-  # one of these (anything else, like housing data, is left out)
+  # Which news: US events from TradingView's economic calendar whose name contains one of these
+  # (anything else, like housing data, is left out). Put "# " in front of a line to switch it off.
   include:
     - Fed Interest Rate Decision
     - Fed Press Conference
     - FOMC Economic Projections
-    - Inflation Rate MoM
+    - FOMC Minutes                   # minutes of the last meeting, 3 weeks after it
+    - Fed Chair                      # Fed Chair speeches and testimony
+    - Inflation Rate MoM             # CPI (and core CPI)
     - Non Farm Payrolls
+    - PPI MoM                        # producer prices (and core PPI)
+    - Retail Sales MoM               # retail sales (and core retail sales)
+    - Retail Sales Ex Autos MoM      # core retail sales (TradingView rates it medium, so it's asked for separately)
     # Optional extras: delete the "# " in front of a line to switch it on
     # - Core PCE Price Index MoM     # the Fed's other inflation number
-    # - Fed Chair                    # Fed Chair speeches and testimony
-    - PPI MoM                        # producer prices
-    # - Retail Sales MoM
     # - GDP Growth Rate
   # ...but never these
   skip: [Annual Revision]
@@ -283,7 +285,8 @@ events:
     GDP: ["GDP Growth Rate QoQ Adv", "GDP Growth Rate QoQ 2nd Est", "GDP Growth Rate QoQ Final",
           "GDP Growth Rate QoQ", "Advance GDP q/q", "Prelim GDP q/q", "Final GDP q/q"]
     PPI: ["PPI MoM", "PPI m/m", "Core PPI m/m"]
-    Retail sales: ["Retail Sales MoM", "Retail Sales m/m", "Core Retail Sales m/m"]
+    Retail sales: ["Retail Sales MoM", "Retail Sales m/m", "Core Retail Sales m/m", "Retail Sales Ex Autos MoM",
+                   "Core Retail Sales MoM"]
   # Which of those get the "How BTC reacted last times" table, and how many past times to show.
   # Past dates are in events_history.json (a year of them was filled in from TradingView's
   # economic calendar); new ones are added automatically as they happen.
