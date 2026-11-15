@@ -159,12 +159,16 @@ def merge_events(events, groups):
         g = group_of(e["title"], groups)
         key = (g or e["title"], e["when"].date() if g else e["when"])
         if key not in merged:
-            merged[key] = {**e, "name": g or e["title"], "group": g, "titles": [e["title"]], "kind": "macro"}
+            merged[key] = {**e, "name": g or e["title"], "group": g, "titles": [e["title"]], "kind": "macro",
+                           "rank": groups[g].index(e["title"]) if g and e["title"] in groups[g] else 99}
         else:
             m = merged[key]
             m["titles"].append(e["title"])
-            if e["when"] < m["when"]:
-                m["when"], m["forecast"], m["previous"] = e["when"], e["forecast"], e["previous"]
+            # Show the headline release's numbers: the earliest one, and at the same time the one listed first
+            # in the group (e.g. Retail Sales MoM over core retail sales)
+            rank = groups[g].index(e["title"]) if g and e["title"] in groups[g] else 99
+            if (e["when"], rank) < (m["when"], m.get("rank", 99)):
+                m["when"], m["forecast"], m["previous"], m["rank"] = e["when"], e["forecast"], e["previous"], rank
     for m in merged.values():
         if m["group"] == "FOMC" and any("Projections" in t for t in m["titles"]):
             m["name"] = "FOMC + dot plot"
@@ -346,6 +350,7 @@ def run(cfg, mode, dry_run=False, now=None):
         log.warning("TradingView calendar failed, using Forex Factory (this week only): %s", e)
         raw = ff_events(http, ev["calendar_url"], ev["countries"], ev["impacts"])
     groups = ev["groups"]
+    log.info("Calendar events on the list: %s", ", ".join(f"{e['title']} {e['when']:%a %d %b %H:%M}" for e in raw) or "none")
     macro = merge_events(raw, groups)
     fomc = []
     try:
