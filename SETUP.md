@@ -121,6 +121,9 @@ Try it by hand: **Actions** → **Alt Screener** → **Run workflow** → tick *
 - **Sunday 17:30 UK:** the week ahead: US news (FOMC, FOMC minutes, Fed Chair speeches, CPI, jobs, PPI, retail
   sales and core retail sales; PCE and GDP can be switched on under `events: include:` in `config.yml`) and big-tech earnings (Nvidia, Apple, Microsoft, Google, Amazon, Meta, Tesla, Broadcom, AMD), plus how BTC moved the last few times each big event happened.
 - **Reminders:** 1 day, 1 hour and 15 minutes before each event.
+- **Where the dates come from:** Forex Factory's calendar for the current week (it lists FOMC minutes and
+  Fed Chair speeches, which TradingView sometimes doesn't), TradingView for the days around it. If one
+  is down, the other covers everything.
 
 Set up (same as the Doritos one, a webhook for the news channel):
 1. In Discord, go to the news channel → ⚙️ → **Integrations** → **Webhooks** → **New Webhook** → **Copy Webhook URL**.

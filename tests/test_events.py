@@ -22,6 +22,42 @@ def test_forex_factory_red_usd_only():
     assert fed["when"] == datetime(2026, 10, 28, 18, 0, tzinfo=timezone.utc)  # 2pm New York (EDT)
 
 
+def test_forex_factory_uses_the_include_list(cfg):
+    payload = json.loads((DATA / "ff_calendar_thisweek.json").read_text())
+    ev = cfg["events"]
+    rows = ff_events(FakeHttp({"faireconomy": FakeResponse(payload=payload)}), "https://nfs.faireconomy.media/x",
+                     ["USD"], ev["impacts"], ev["include"], ev["skip"])
+    titles = {r["title"] for r in rows}
+    assert titles == {"Federal Funds Rate", "FOMC Statement", "FOMC Press Conference"}  # PCE/GDP/claims are off
+    (fomc,) = merge_events(rows, ev["groups"])
+    assert fomc["name"] == "FOMC" and fomc["forecast"] == fed_funds_forecast(payload)
+
+
+def fed_funds_forecast(payload):
+    return next(r["forecast"] for r in payload if r["title"] == "Federal Funds Rate")
+
+
+def test_forex_factory_week_wins_tradingview_fills_the_rest():
+    from screener.events import combine_calendars, ff_week
+
+    now = datetime(2026, 11, 15, 22, 30, tzinfo=timezone.utc)  # Sunday evening UK
+    start, end = ff_week(now)
+    assert start == datetime(2026, 11, 15, 5, 0, tzinfo=timezone.utc)  # Sunday 00:00 New York (EST)
+    assert end == datetime(2026, 11, 22, 5, 0, tzinfo=timezone.utc)
+    minutes = dict(title="FOMC Meeting Minutes", when=datetime(2026, 11, 18, 19, 0, tzinfo=timezone.utc), forecast="",
+                   previous="", country="USD")
+    tv_retail = dict(title="Retail Sales MoM", when=datetime(2026, 11, 17, 13, 30, tzinfo=timezone.utc), forecast="0.2%",
+                     previous="0.8%", country="US")
+    tv_last_week = dict(title="PPI MoM", when=datetime(2026, 11, 13, 13, 30, tzinfo=timezone.utc), forecast="",
+                        previous="", country="US")
+    tv_next_week = dict(title="Non Farm Payrolls", when=datetime(2026, 11, 27, 13, 30, tzinfo=timezone.utc), forecast="",
+                        previous="", country="US")
+    got = combine_calendars([minutes], [tv_retail, tv_last_week, tv_next_week], now)
+    assert [e["title"] for e in got] == ["PPI MoM", "FOMC Meeting Minutes", "Non Farm Payrolls"]
+    assert combine_calendars(None, [tv_retail], now) == [tv_retail]  # Forex Factory down: TradingView covers it
+    assert combine_calendars([minutes], None, now) == [minutes]
+
+
 def test_retail_sales_row_shows_headline_numbers():
     t = datetime(2026, 11, 17, 13, 30, tzinfo=timezone.utc)
     rows = [dict(title="Retail Sales Ex Autos MoM", when=t, forecast="0.4%", previous="0.9%", country="US"),

@@ -37,12 +37,20 @@ MONTHS = {m: i for i, m in enumerate(["january", "february", "march", "april", "
 # ---------------------------------------------------------------- sources
 
 
-def ff_events(http, url, countries, impacts):
-    """This week's calendar from Forex Factory's feed: [{title, when (UTC), forecast, previous, country}]."""
+def _wanted(title, include, skip):
+    t = title.lower()
+    return (include is None or any(w.lower() in t for w in include)) and not any(w.lower() in t for w in skip or [])
+
+
+def ff_events(http, url, countries, impacts, include=None, skip=None):
+    """This week's calendar from Forex Factory's feed: [{title, when (UTC), forecast, previous, country}].
+    With `include`, only titles containing one of those words (and none of `skip`)."""
     rows = http.request("GET", url, headers=BROWSER).json()
     out = []
     for r in rows:
         if r.get("country") not in countries or r.get("impact") not in impacts:
+            continue
+        if not _wanted(r.get("title", ""), include, skip):
             continue
         try:
             when = datetime.fromisoformat(r["date"]).astimezone(timezone.utc)
@@ -63,7 +71,7 @@ def tv_events(http, url, start, end, countries, include, skip):
     out = []
     for e in r.get("result") or []:
         title = e.get("title", "")
-        if not any(w.lower() in title.lower() for w in include) or any(w.lower() in title.lower() for w in skip):
+        if not _wanted(title, include, skip):
             continue
         try:
             when = datetime.fromisoformat(e["date"].replace("Z", "+00:00"))
@@ -78,6 +86,24 @@ def tv_events(http, url, start, end, countries, include, skip):
         out.append({"title": title, "when": when, "forecast": fmt(e.get("forecast")), "previous": fmt(e.get("previous")),
                     "country": e.get("country", "")})
     return out
+
+
+def ff_week(now):
+    """Forex Factory's "this week": Sunday 00:00 to the next Sunday 00:00, New York time, as UTC."""
+    ny = now.astimezone(ZoneInfo("America/New_York"))
+    sunday = (ny - timedelta(days=(ny.weekday() + 1) % 7)).replace(hour=0, minute=0, second=0, microsecond=0)
+    start = sunday.astimezone(timezone.utc)
+    end = (sunday + timedelta(days=7)).replace(hour=0).astimezone(timezone.utc)  # DST-safe: midnight again
+    return start, end
+
+
+def combine_calendars(ff, tv, now):
+    """Forex Factory for its week (it lists everything: minutes, Fed Chair speeches...), TradingView for the
+    days either side of it (past dates for the BTC history, and next week). Either can be None if it failed."""
+    if ff is None:
+        return tv or []
+    start, end = ff_week(now)
+    return sorted(ff + [e for e in tv or [] if not start <= e["when"] < end], key=lambda e: e["when"])
 
 
 def fomc_decisions(html):
@@ -343,12 +369,19 @@ def run(cfg, mode, dry_run=False, now=None):
         log.warning("DISCORD_NEWS_WEBHOOK_URL secret is not set yet (see SETUP.md), so nothing to do")
         return 0
 
+    tv = ff = None
     try:
-        raw = tv_events(http, ev["tv_calendar_url"], now - timedelta(days=8), now + timedelta(days=9),
-                        ev["tv_countries"], ev["include"], ev.get("skip") or [])
+        ff = ff_events(http, ev["calendar_url"], ev["countries"], ev["impacts"], ev["include"], ev.get("skip") or [])
     except Exception as e:  # noqa: BLE001
-        log.warning("TradingView calendar failed, using Forex Factory (this week only): %s", e)
-        raw = ff_events(http, ev["calendar_url"], ev["countries"], ev["impacts"])
+        log.warning("Forex Factory calendar failed, using TradingView for this week too: %s", e)
+    try:
+        tv = tv_events(http, ev["tv_calendar_url"], now - timedelta(days=8), now + timedelta(days=9),
+                       ev["tv_countries"], ev["include"], ev.get("skip") or [])
+    except Exception as e:  # noqa: BLE001
+        log.warning("TradingView calendar failed: %s", e)
+    if ff is None and tv is None:
+        raise RuntimeError("Both economic calendars (Forex Factory and TradingView) failed")
+    raw = combine_calendars(ff, tv, now)
     groups = ev["groups"]
     log.info("Calendar events on the list: %s", ", ".join(f"{e['title']} {e['when']:%a %d %b %H:%M}" for e in raw) or "none")
     macro = merge_events(raw, groups)
