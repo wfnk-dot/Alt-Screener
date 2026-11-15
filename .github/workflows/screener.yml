@@ -1,10 +1,8 @@
 name: Alt Screener
 
 on:
-  # GitHub's timer only understands UTC and is often late, so this wakes every
-  # hour and the "Check the clock" step compares UK time with config.yml.
-  schedule:
-    - cron: "7,37 * * * *"
+  # Weekly Discord watchlist switched off 15 Nov 2026 (replaced by the Cloudflare watchlist page).
+  # The "Run workflow" button still works for a manual run.
   # The "Run workflow" button on the Actions tab
   workflow_dispatch:
     inputs:
