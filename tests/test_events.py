@@ -22,6 +22,15 @@ def test_forex_factory_red_usd_only():
     assert fed["when"] == datetime(2026, 10, 28, 18, 0, tzinfo=timezone.utc)  # 2pm New York (EDT)
 
 
+def test_retail_sales_row_shows_headline_numbers():
+    t = datetime(2026, 11, 17, 13, 30, tzinfo=timezone.utc)
+    rows = [dict(title="Retail Sales Ex Autos MoM", when=t, forecast="0.4%", previous="0.9%", country="US"),
+            dict(title="Retail Sales MoM", when=t, forecast="0.2%", previous="0.8%", country="US")]
+    groups = {"Retail sales": ["Retail Sales MoM", "Retail Sales Ex Autos MoM"]}
+    (m,) = merge_events(rows, groups)
+    assert (m["name"], m["forecast"], m["previous"]) == ("Retail sales", "0.2%", "0.8%")
+
+
 def test_merge_fomc_into_one_row():
     rows = merge_events(ff(), GROUPS)
     fomc = [r for r in rows if r["name"] == "FOMC"]
