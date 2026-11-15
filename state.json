@@ -1,6 +1,6 @@
 {
   "last_midweek_slot": "2026-11-11T18:00:00+00:00",
-  "last_scheduled_week": "2026-11-09",
+  "last_scheduled_week": "2026-11-16",
   "midweek_pinged": {
     "2026-11-02": [
       "TRUMP",
@@ -36,6 +36,18 @@
       "1000PEPE",
       "XRP",
       "ZEC",
+      "NEAR"
+    ],
+    "2026-11-16": [
+      "1000PEPE",
+      "ZEC",
+      "UNI",
+      "ARB",
+      "XRP",
+      "TRUMP",
+      "INJ",
+      "PUMP",
+      "ENA",
       "NEAR"
     ]
   }
