@@ -25,7 +25,7 @@ concurrency:
 jobs:
   catalysts:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 340  # a run can wait up to reminder_wait_minutes (config.yml) for a reminder
     steps:
       - uses: actions/checkout@v4
 
