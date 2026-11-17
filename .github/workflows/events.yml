@@ -9,7 +9,7 @@ on:
       outlook:
         description: "Post the week-ahead outlook now"
         type: boolean
-        default: true
+        default: false  # cron-job.org starts this every 15 minutes without inputs: that must not post the week ahead
       dry_run:
         description: "Dry run: show in the log only, don't post or save"
         type: boolean
@@ -41,9 +41,9 @@ jobs:
         env:
           DISCORD_NEWS_WEBHOOK_URL: ${{ secrets.DISCORD_NEWS_WEBHOOK_URL }}
         run: |
-          ARGS=""
-          if [ "${{ github.event_name }}" = "schedule" ]; then ARGS="--scheduled"; fi
-          if [ "${{ inputs.outlook }}" = "true" ]; then ARGS="$ARGS --outlook"; fi
+          # Timer runs (GitHub's schedule or cron-job.org): week ahead only when it's due (Sunday 17:30), plus reminders.
+          # Ticking "Post the week-ahead outlook now" in Actions posts it straight away.
+          if [ "${{ inputs.outlook }}" = "true" ]; then ARGS="--outlook"; else ARGS="--scheduled"; fi
           if [ "${{ inputs.dry_run }}" = "true" ]; then ARGS="$ARGS --dry-run"; fi
           python -m screener.events $ARGS
 
