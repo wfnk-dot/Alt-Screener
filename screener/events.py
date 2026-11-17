@@ -432,6 +432,8 @@ def run(cfg, mode, dry_run=False, now=None):
                     items = [e for e in upcoming if e["when"] == when]
                     posts.append(_reminder_post(label, when, items, history, btc, tz))
                     sent.add(key)
+            elif lead < timedelta(minutes=minutes) / 2:
+                sent.add(key)  # too late for this one (e.g. the 1-hour one with 10 minutes left): skip it
             elif lead <= timedelta(minutes=minutes) + timedelta(minutes=ev["reminder_wait_minutes"]):
                 later.append((when - timedelta(minutes=minutes), key, label, when))
     sent_now = _send(posts, url, ev, dry_run)
