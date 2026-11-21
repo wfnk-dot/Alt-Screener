@@ -546,8 +546,12 @@ def main(argv=None):
     p.add_argument("--dry-run", action="store_true", help="print alerts instead of posting, don't save state")
     args = p.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    cfg = load_config()
+    if not cfg["alerts"].get("enabled", True):
+        log.info("Dorito alerts are switched off (alerts: enabled: false in config.yml)")
+        return 0
     try:
-        run(load_config(), dry_run=args.dry_run)
+        run(cfg, dry_run=args.dry_run)
     except Exception as e:
         log.exception("Alerts failed")
         (ROOT / "run_error.txt").write_text(f"Dorito alerts: {type(e).__name__}: {e}"[:300], encoding="utf-8")

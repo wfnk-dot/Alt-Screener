@@ -3,8 +3,9 @@ name: Dorito Alerts
 on:
   # Every 15 minutes (GitHub skips some scheduled runs when it's busy). Each timeframe is only
   # checked once a new candle has closed, so most runs finish in seconds.
-  schedule:
-    - cron: "3,18,33,48 * * * *"
+  # schedule: switched off with the alerts (alerts: enabled in config.yml). To turn back on, restore:
+  #   schedule:
+  #     - cron: "3,18,33,48 * * * *"
   workflow_dispatch:
     inputs:
       dry_run:
